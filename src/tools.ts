@@ -34,6 +34,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: "string",
           description: "Optional interests as comma-separated Korean keywords, such as 과학, 모험, 역사, 그림책."
         },
+        prefer_non_comic: {
+          type: "boolean",
+          description: "Set true when the user asks for non-comic books, for example 만화책 말고, 학습만화 제외, 일반 과학책."
+        },
+        exclude_keywords: {
+          type: "string",
+          description: "Optional comma-separated keywords or genres to exclude from recommendations, such as 만화, 흔한남매, 판타지."
+        },
         library_name: {
           type: "string",
           description: "Optional library name to check holdings."
@@ -247,6 +255,8 @@ export async function callTool(
             optionalNumber(args, "age"),
             optionalString(args, "grade"),
             optionalStringList(args, "interests"),
+            optionalBoolean(args, "prefer_non_comic"),
+            optionalStringList(args, "exclude_keywords"),
             optionalString(args, "library_name"),
             optionalString(args, "library_code"),
             optionalString(args, "place_name"),
@@ -316,6 +326,8 @@ async function recommendBooksForChild(
   age: number | undefined,
   grade: string | undefined,
   interests: string[],
+  preferNonComic: boolean | undefined,
+  excludeKeywords: string[],
   libraryName: string | undefined,
   libraryCode: string | undefined,
   placeName: string | undefined,
@@ -343,6 +355,7 @@ async function recommendBooksForChild(
   const effectiveRegion = region
     ?? libraryTarget.libraries.map((library) => inferRegionCodeFromAddress(library.address)).find(Boolean);
   const popularBooks = await client.getPopularBooks(effectiveRegion, profile.ageGroupCode);
+  const exclusionRules = buildRecommendationExclusionRules(excludeKeywords, preferNonComic);
   if (popularBooks.length === 0) {
     return [
       "## 자녀 맞춤 추천 후보를 찾지 못했습니다",
@@ -355,23 +368,29 @@ async function recommendBooksForChild(
   }
 
   const augmented = await Promise.all(
-    popularBooks.slice(0, 10).map(async (book, index) => {
+    popularBooks.slice(0, 50).map(async (book, index) => {
       const aladin = await findAladinMatch(client, book).catch(() => undefined);
       const interestScore = scoreInterestMatch(book, aladin, interests);
       const aladinBoost = aladin?.bestRank ? Math.max(0, 80 - Math.min(aladin.bestRank, 80)) : 0;
+      const comicLike = isComicLikeBook(book, aladin);
+      const excluded = matchesRecommendationExclusion(book, aladin, exclusionRules);
+      const comicPenalty = comicLike ? (preferNonComic ? 600 : 240) : 0;
       return {
         book,
         ranking: book.ranking ?? index + 1,
         aladin,
         interestScore,
-        score: 1000 - ((book.ranking ?? index + 1) * 20) + interestScore + aladinBoost
+        comicLike,
+        excluded,
+        score: 1000 - ((book.ranking ?? index + 1) * 14) + interestScore + aladinBoost - comicPenalty
       };
     })
   );
 
-  const recommendations = augmented
+  const filtered = augmented.filter((candidate) => !candidate.excluded);
+  const sortedCandidates = (filtered.length > 0 ? filtered : augmented)
     .sort((a, b) => b.score - a.score || a.ranking - b.ranking)
-    .slice(0, safeLimit);
+  const recommendations = selectChildRecommendations(sortedCandidates, safeLimit, preferNonComic === true);
 
   const holdingRows = await buildChildRecommendationRows(client, recommendations, libraryTarget.libraries, profile, interests);
   const topBook = recommendations[0]?.book;
@@ -387,6 +406,8 @@ async function recommendBooksForChild(
     "",
     `독자 기준: ${profile.label}`,
     interests.length > 0 ? `관심사: ${interests.join(", ")}` : "관심사: 지정 없음",
+    preferNonComic ? "추천 조건: 만화/학습만화 제외 우선" : "",
+    excludeKeywords.length > 0 ? `제외 키워드: ${excludeKeywords.join(", ")}` : "",
     effectiveRegion ? `정보나루 지역 코드: \`${effectiveRegion}\`` : "정보나루 지역 코드: 전국",
     libraryTarget.summary,
     "",
@@ -719,7 +740,14 @@ type ChildRecommendationCandidate = {
   ranking: number;
   aladin?: AladinBook;
   interestScore: number;
+  comicLike: boolean;
+  excluded: boolean;
   score: number;
+};
+
+type RecommendationExclusionRules = {
+  keywords: string[];
+  excludeComics: boolean;
 };
 
 function resolveChildReadingProfile(age: number | undefined, grade: string | undefined): ChildReadingProfile | undefined {
@@ -889,7 +917,8 @@ async function buildChildRecommendationRows(
 
     const reasons = [
       `${profile.label} 연령대 인기 대출 ${candidate.ranking}위권`,
-      candidate.interestScore > 0 ? `관심사(${interests.join(", ")})와 내용/분야 매칭` : ""
+      candidate.interestScore > 0 ? `관심사(${interests.join(", ")})와 내용/분야 매칭` : "",
+      candidate.comicLike ? "" : "일반 지식서/비만화 후보"
     ].filter(Boolean).join("<br>");
 
     return [
@@ -929,6 +958,85 @@ function scoreInterestMatch(book: BookSummary, aladin: AladinBook | undefined, i
     }
   }
   return score;
+}
+
+function buildRecommendationExclusionRules(excludeKeywords: string[], preferNonComic: boolean | undefined): RecommendationExclusionRules {
+  const normalizedKeywords = excludeKeywords
+    .flatMap((keyword) => {
+      const normalized = normalizeLookupText(keyword);
+      if (!normalized) return [];
+      if (/만화|코믹|학습만화|웹툰/.test(normalized)) {
+        return ["만화", "코믹", "학습만화", "웹툰", "흔한남매"];
+      }
+      return [keyword];
+    })
+    .map(normalizeLookupText)
+    .filter(Boolean);
+
+  return {
+    keywords: [...new Set(normalizedKeywords)],
+    excludeComics: preferNonComic === true || normalizedKeywords.some((keyword) => /만화|코믹|웹툰/.test(keyword))
+  };
+}
+
+function matchesRecommendationExclusion(
+  book: BookSummary,
+  aladin: AladinBook | undefined,
+  rules: RecommendationExclusionRules
+): boolean {
+  if (rules.excludeComics && isComicLikeBook(book, aladin)) return true;
+  if (rules.keywords.length === 0) return false;
+  const searchable = recommendationSearchText(book, aladin);
+  return rules.keywords.some((keyword) => searchable.includes(keyword));
+}
+
+function selectChildRecommendations(
+  candidates: ChildRecommendationCandidate[],
+  limit: number,
+  preferNonComic: boolean
+): ChildRecommendationCandidate[] {
+  if (candidates.length <= limit) return candidates;
+
+  const nonComics = candidates.filter((candidate) => !candidate.comicLike);
+  if (preferNonComic && nonComics.length > 0) {
+    return nonComics.slice(0, limit);
+  }
+
+  const selected: ChildRecommendationCandidate[] = [];
+  const comicLimit = Math.max(1, Math.floor(limit / 3));
+
+  for (const candidate of candidates) {
+    const comicCount = selected.filter((item) => item.comicLike).length;
+    if (candidate.comicLike && comicCount >= comicLimit && nonComics.length >= limit - comicLimit) continue;
+    selected.push(candidate);
+    if (selected.length >= limit) return selected;
+  }
+
+  for (const candidate of candidates) {
+    if (selected.includes(candidate)) continue;
+    selected.push(candidate);
+    if (selected.length >= limit) break;
+  }
+
+  return selected;
+}
+
+function isComicLikeBook(book: BookSummary, aladin: AladinBook | undefined): boolean {
+  const searchable = recommendationSearchText(book, aladin);
+  return /만화|코믹|학습만화|웹툰|흔한남매|쿠키런|카카오프렌즈|놓지마|엉덩이탐정/.test(searchable);
+}
+
+function recommendationSearchText(book: BookSummary, aladin: AladinBook | undefined): string {
+  return normalizeLookupText([
+    book.title,
+    book.authors,
+    book.publisher,
+    aladin?.title,
+    aladin?.authors,
+    aladin?.publisher,
+    aladin?.description,
+    aladin?.categoryName
+  ].filter(Boolean).join(" "));
 }
 
 function interestKeywords(interest: string): string[] {
@@ -1594,6 +1702,16 @@ function optionalNumber(args: Record<string, unknown>, key: string): number | un
   if (value === undefined || value === null || value === "") return undefined;
   const parsed = typeof value === "number" ? value : Number(String(value).trim());
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function optionalBoolean(args: Record<string, unknown>, key: string): boolean | undefined {
+  const value = args[key];
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value;
+  const normalized = normalizeLookupText(String(value));
+  if (/^(true|1|yes|y|on|사용|예|네|맞음)$/.test(normalized)) return true;
+  if (/^(false|0|no|n|off|미사용|아니오|아니요|아님)$/.test(normalized)) return false;
+  return undefined;
 }
 
 function clampNumber(value: number, min: number, max: number): number {

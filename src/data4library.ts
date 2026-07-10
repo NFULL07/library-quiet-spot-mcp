@@ -315,7 +315,7 @@ export class Data4LibraryClient {
       region,
       age: ageGroup,
       pageNo: "1",
-      pageSize: "10"
+      pageSize: "50"
     });
     const response = this.responseOf(xml);
     const docs = asObject(response)?.docs;
