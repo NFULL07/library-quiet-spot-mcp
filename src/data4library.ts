@@ -360,6 +360,23 @@ export class Data4LibraryClient {
       .filter((book) => book.title || book.isbn13);
   }
 
+  async getAladinBookByIsbn(isbn13: string): Promise<AladinBook | undefined> {
+    if (!this.config.aladinTtbKey || !isbn13.trim()) return undefined;
+
+    const json = await this.requestAladinJson("ItemLookUp.aspx", {
+      ItemId: isbn13.trim(),
+      ItemIdType: "ISBN13",
+      SearchTarget: "Book",
+      output: "js",
+      Version: "20131101"
+    });
+    const root = asObject(json) ?? {};
+    const [book] = ensureArray(root.item)
+      .map(normalizeAladinBook)
+      .filter((item) => item.isbn13 === isbn13.trim());
+    return book;
+  }
+
   private async getLibraryPage(pageNo: number, libraryName?: string, pageSize = 10): Promise<LibrarySummary[]> {
     const xml = await this.requestXml("libSrch", {
       libName: libraryName,

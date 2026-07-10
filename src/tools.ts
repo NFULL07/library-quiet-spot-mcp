@@ -818,7 +818,12 @@ async function resolveLibraryTargets(
 }
 
 async function findAladinMatch(client: Data4LibraryClient, book: BookSummary): Promise<AladinBook | undefined> {
-  const query = book.title || book.isbn13;
+  if (book.isbn13) {
+    const exactIsbnBook = await client.getAladinBookByIsbn(book.isbn13);
+    if (exactIsbnBook) return exactIsbnBook;
+  }
+
+  const query = book.title;
   if (!query) return undefined;
   const aladinBooks = await client.searchAladinBooks(query, 5);
   if (aladinBooks.length === 0) return undefined;
