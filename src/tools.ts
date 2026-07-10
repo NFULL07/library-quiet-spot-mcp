@@ -390,9 +390,9 @@ async function recommendBooksForChild(
     effectiveRegion ? `정보나루 지역 코드: \`${effectiveRegion}\`` : "정보나루 지역 코드: 전국",
     libraryTarget.summary,
     "",
-    "정보나루 연령대별 인기 대출 데이터를 기본 후보로 사용하고, `ALADIN_TTB_KEY`가 설정된 경우 알라딘 책 소개/분야/베스트셀러 순위를 보조 근거로 더했습니다.",
+    "정보나루 연령대별 인기 대출 데이터를 기본 후보로 사용하고, 추천 도서는 지정 도서관 또는 주변 도서관의 소장·대출 정보와 함께 보여줍니다.",
     "",
-    markdownTable(["순위", "추천 도서", "추천 근거", "서점 보강", "도서관 소장/대출"], holdingRows),
+    markdownTable(["순위", "추천 도서", "추천 근거", "도서관 소장/대출"], holdingRows),
     "",
     "## 같이 빌리기 좋은 다음 책",
     "",
@@ -854,31 +854,16 @@ async function buildChildRecommendationRows(
 
     const reasons = [
       `${profile.label} 연령대 인기 대출 ${candidate.ranking}위권`,
-      candidate.interestScore > 0 ? `관심사(${interests.join(", ")})와 내용/분야 매칭` : "",
-      candidate.aladin?.bestRank ? `알라딘 베스트셀러 순위 ${candidate.aladin.bestRank}` : ""
+      candidate.interestScore > 0 ? `관심사(${interests.join(", ")})와 내용/분야 매칭` : ""
     ].filter(Boolean).join("<br>");
 
     return [
       String(index + 1),
       formatBookTitle(candidate.book),
       reasons || "연령대 대출 데이터 기반",
-      formatAladinAugmentation(candidate.aladin, client.hasAladinTtbKey()),
       formatLibraryHoldings(holdings)
     ];
   }));
-}
-
-function formatAladinAugmentation(aladin: AladinBook | undefined, configured: boolean): string {
-  if (!configured) return "ALADIN_TTB_KEY 미설정";
-  if (!aladin) return "알라딘 매칭 없음";
-
-  const parts = [
-    aladin.categoryName ? `분야: ${aladin.categoryName}` : "",
-    aladin.description ? `소개: ${aladin.description.slice(0, 80)}` : "",
-    aladin.bestRank ? `베스트셀러 ${aladin.bestRank}위` : "",
-    aladin.link ? `[상세](${aladin.link})` : ""
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join("<br>") : "알라딘 기본 정보 확인";
 }
 
 function formatLibraryHoldings(holdings: Array<{ library: LibrarySummary; exist?: BookExistResult }>): string {
