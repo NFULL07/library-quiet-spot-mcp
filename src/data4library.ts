@@ -48,6 +48,14 @@ export type BookExistResult = {
   rawStatus: string;
 };
 
+export type LibrarySummary = {
+  code: string;
+  name: string;
+  address: string;
+  tel: string;
+  homepage: string;
+};
+
 export type TrendPoint = {
   label: string;
   count: number;
@@ -85,6 +93,21 @@ export class Data4LibraryClient {
 
   hasAuthKey(): boolean {
     return Boolean(this.config.authKey);
+  }
+
+  async searchLibraries(libraryName: string): Promise<LibrarySummary[]> {
+    const xml = await this.requestXml("libSrch", {
+      libName: libraryName,
+      pageNo: "1",
+      pageSize: "10"
+    });
+    const response = this.responseOf(xml);
+    const libs = asObject(response)?.libs;
+    const rawLibraries = ensureArray(asObject(libs)?.lib ?? asObject(response)?.lib);
+
+    return rawLibraries
+      .map(normalizeLibrary)
+      .filter((library) => library.code || library.name);
   }
 
   async getUsageTrend(libraryCode: string, type: "D" | "H"): Promise<TrendPoint[]> {
@@ -133,7 +156,7 @@ export class Data4LibraryClient {
     };
   }
 
-  async getPopularBooks(region: string, ageGroup?: string): Promise<PopularBook[]> {
+  async getPopularBooks(region?: string, ageGroup?: string): Promise<PopularBook[]> {
     const today = new Date();
     const endDt = formatDate(today);
     const start = new Date(today);
@@ -156,6 +179,21 @@ export class Data4LibraryClient {
       ...normalizeBook(item),
       ranking: numberFrom(asObject(item)?.ranking) ?? index + 1
     })).filter((book) => book.title || book.isbn13);
+  }
+
+  async searchBooks(title: string): Promise<BookSummary[]> {
+    const xml = await this.requestXml("srchBooks", {
+      title,
+      pageNo: "1",
+      pageSize: "10"
+    });
+    const response = this.responseOf(xml);
+    const docs = asObject(response)?.docs;
+    const rawBooks = ensureArray(asObject(docs)?.doc ?? asObject(response)?.doc);
+
+    return rawBooks
+      .map(normalizeBook)
+      .filter((book) => book.title || book.isbn13);
   }
 
   private async requestXml(endpoint: string, params: Record<string, string | undefined>): Promise<unknown> {
@@ -212,6 +250,17 @@ function normalizeBook(value: unknown): BookSummary {
     volume: cleanText(item.vol ?? item.volume),
     imageUrl: cleanText(item.bookImageURL ?? item.bookImageUrl ?? item.imageUrl),
     loanCount: numberFrom(item.loanCnt ?? item.loanCount)
+  };
+}
+
+function normalizeLibrary(value: unknown): LibrarySummary {
+  const item = asObject(value) ?? {};
+  return {
+    code: cleanText(item.libCode ?? item.libraryCode ?? item.code),
+    name: cleanText(item.libName ?? item.libraryName ?? item.name),
+    address: cleanText(item.address ?? item.addr ?? item.libAddress),
+    tel: cleanText(item.tel ?? item.phone ?? item.libTel),
+    homepage: cleanText(item.homepage ?? item.homepageUrl ?? item.url)
   };
 }
 
