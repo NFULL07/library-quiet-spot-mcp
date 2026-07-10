@@ -56,6 +56,12 @@ export type LibrarySummary = {
   homepage: string;
   operatingTime: string;
   closedDays: string;
+  latitude?: number;
+  longitude?: number;
+};
+
+export type NearbyLibrary = LibrarySummary & {
+  distanceKm: number;
 };
 
 export type TrendPoint = {
@@ -140,6 +146,39 @@ export class Data4LibraryClient {
     const result = [...matches.values()];
     this.librarySearchCache.set(query, result);
     return result;
+  }
+
+  async searchNearbyLibraries(
+    latitude: number,
+    longitude: number,
+    radiusKm = 5,
+    limit = 10
+  ): Promise<NearbyLibrary[]> {
+    const pageSize = 100;
+    const maxPages = 80;
+    const matches: NearbyLibrary[] = [];
+    const seenPageSignatures = new Set<string>();
+
+    for (let pageNo = 1; pageNo <= maxPages; pageNo += 1) {
+      const page = await this.getLibraryPage(pageNo, undefined, pageSize);
+      if (page.length === 0) break;
+
+      const pageSignature = page.map((library) => library.code || library.name).join("|");
+      if (seenPageSignatures.has(pageSignature)) break;
+      seenPageSignatures.add(pageSignature);
+
+      for (const library of page) {
+        if (library.latitude === undefined || library.longitude === undefined) continue;
+        const distanceKm = haversineKm(latitude, longitude, library.latitude, library.longitude);
+        if (distanceKm <= radiusKm) {
+          matches.push({ ...library, distanceKm });
+        }
+      }
+    }
+
+    return matches
+      .sort((a, b) => a.distanceKm - b.distanceKm || a.name.localeCompare(b.name, "ko"))
+      .slice(0, limit);
   }
 
   async getUsageTrend(libraryCode: string, type: "D" | "H"): Promise<TrendPoint[]> {
@@ -328,6 +367,8 @@ function normalizeBook(value: unknown): BookSummary {
 
 function normalizeLibrary(value: unknown): LibrarySummary {
   const item = asObject(value) ?? {};
+  const latitude = normalizeLatitude(item);
+  const longitude = normalizeLongitude(item);
   return {
     code: cleanText(item.libCode ?? item.libraryCode ?? item.code),
     name: cleanText(item.libName ?? item.libraryName ?? item.name),
@@ -352,8 +393,30 @@ function normalizeLibrary(value: unknown): LibrarySummary {
       "holiday",
       "restDay",
       "regularClosed"
-    ])
+    ]),
+    ...(latitude !== undefined ? { latitude } : {}),
+    ...(longitude !== undefined ? { longitude } : {})
   };
+}
+
+function normalizeLatitude(item: XmlObject): number | undefined {
+  return validCoordinate(
+    numberFrom(item.latitude ?? item.lat ?? item.libLatitude ?? item.y ?? item.mapY ?? item.geoY),
+    -90,
+    90
+  );
+}
+
+function normalizeLongitude(item: XmlObject): number | undefined {
+  return validCoordinate(
+    numberFrom(item.longitude ?? item.lng ?? item.lon ?? item.libLongitude ?? item.x ?? item.mapX ?? item.geoX),
+    -180,
+    180
+  );
+}
+
+function validCoordinate(value: number | undefined, min: number, max: number): number | undefined {
+  return value !== undefined && value >= min && value <= max ? value : undefined;
 }
 
 function extractLibraries(response: unknown): LibrarySummary[] {
@@ -524,6 +587,27 @@ function asObject(value: unknown): XmlObject | undefined {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function haversineKm(
+  latitudeA: number,
+  longitudeA: number,
+  latitudeB: number,
+  longitudeB: number
+): number {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(latitudeB - latitudeA);
+  const dLon = toRadians(longitudeB - longitudeA);
+  const latA = toRadians(latitudeA);
+  const latB = toRadians(latitudeB);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(latA) * Math.cos(latB) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
+function toRadians(degrees: number): number {
+  return degrees * Math.PI / 180;
 }
 
 function formatDate(date: Date): string {

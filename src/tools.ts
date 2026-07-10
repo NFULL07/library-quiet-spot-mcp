@@ -1,4 +1,4 @@
-import { Data4LibraryClient, MissingAuthKeyError, BookSummary, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult } from "./data4library.js";
+import { Data4LibraryClient, MissingAuthKeyError, BookSummary, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult, NearbyLibrary } from "./data4library.js";
 import { guardMarkdown, markdownTable } from "./text.js";
 
 export type ToolDefinition = {
@@ -15,6 +15,41 @@ export type ToolDefinition = {
 };
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    name: "find_nearby_libraries",
+    description:
+      "Finds nearby libraries from Data4Library(도서관 정보나루) using latitude/longitude, then shows distance, operating information, and practical visit-window candidates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        latitude: {
+          type: "number",
+          description: "Current latitude, for example 37.5665."
+        },
+        longitude: {
+          type: "number",
+          description: "Current longitude, for example 126.9780."
+        },
+        radius_km: {
+          type: "number",
+          description: "Search radius in kilometers. Defaults to 5 and is capped at 30."
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of libraries to return. Defaults to 10 and is capped at 20."
+        }
+      },
+      required: ["latitude", "longitude"],
+      additionalProperties: false
+    },
+    annotations: {
+      title: "Find nearby libraries",
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+      idempotentHint: true
+    }
+  },
   {
     name: "plan_library_reading_visit",
     description:
@@ -144,6 +179,16 @@ export async function callTool(
 ): Promise<string> {
   try {
     switch (name) {
+      case "find_nearby_libraries":
+        return guardMarkdown(
+          await findNearbyLibraries(
+            client,
+            optionalNumber(args, "latitude"),
+            optionalNumber(args, "longitude"),
+            optionalNumber(args, "radius_km"),
+            optionalNumber(args, "limit")
+          )
+        );
       case "plan_library_reading_visit":
         return guardMarkdown(
           await planLibraryReadingVisit(
@@ -186,6 +231,75 @@ export async function callTool(
   } catch (error) {
     return formatToolError(error);
   }
+}
+
+async function findNearbyLibraries(
+  client: Data4LibraryClient,
+  latitude: number | undefined,
+  longitude: number | undefined,
+  radiusKm: number | undefined,
+  limit: number | undefined
+): Promise<string> {
+  if (latitude === undefined || longitude === undefined) {
+    return [
+      "## 주변 도서관을 찾을 수 없습니다",
+      "",
+      "현재 위치의 위도와 경도를 입력해 주세요.",
+      "",
+      "- 예: `위도 37.5665, 경도 126.9780 주변 도서관 찾아줘`",
+      "- 자연어 장소명은 별도 지오코딩 API가 필요하므로 이 도구는 좌표를 기준으로 검색합니다."
+    ].join("\n");
+  }
+
+  if (!isValidLatitude(latitude) || !isValidLongitude(longitude)) {
+    return [
+      "## 위치 좌표가 올바르지 않습니다",
+      "",
+      `- latitude: ${latitude}`,
+      `- longitude: ${longitude}`,
+      "- 위도는 -90~90, 경도는 -180~180 범위여야 합니다."
+    ].join("\n");
+  }
+
+  const safeRadiusKm = clampNumber(radiusKm ?? 5, 1, 30);
+  const safeLimit = Math.round(clampNumber(limit ?? 10, 1, 20));
+  const libraries = await client.searchNearbyLibraries(latitude, longitude, safeRadiusKm, safeLimit);
+
+  if (libraries.length === 0) {
+    return [
+      "## 주변 도서관을 찾지 못했습니다",
+      "",
+      `- 기준 좌표: ${latitude}, ${longitude}`,
+      `- 검색 반경: ${safeRadiusKm}km`,
+      "",
+      "정보나루 도서관 좌표 데이터가 없거나, 검색 반경 안에 좌표가 등록된 도서관이 없을 수 있습니다.",
+      "반경을 넓히거나 도서관 이름 검색 도구를 사용해 주세요."
+    ].join("\n");
+  }
+
+  const rows = libraries.map((library) => {
+    const visitCandidate = firstVisitCandidate(library);
+    return [
+      `${library.distanceKm.toFixed(2)}km`,
+      library.name || "-",
+      library.address || "-",
+      visitCandidate,
+      library.closedDays || "-",
+      library.code || "-"
+    ];
+  });
+
+  return [
+    "## 내 위치 주변 도서관",
+    "",
+    `기준 좌표: ${latitude}, ${longitude}`,
+    `검색 반경: ${safeRadiusKm}km`,
+    "",
+    markdownTable(["거리", "도서관", "주소", "방문 후보", "휴관일", "도서관 코드"], rows),
+    "",
+    "방문 후보는 정보나루 운영시간을 파싱해 만든 계획용 시간대입니다. 실시간 좌석/혼잡도 값은 아닙니다.",
+    "특정 도서관을 골라 `plan_library_reading_visit` 도구로 책 대출 가능 여부와 다음 독서 후보까지 이어서 확인할 수 있습니다."
+  ].join("\n");
 }
 
 async function findBestVisitTime(
@@ -976,6 +1090,11 @@ function formatLibrary(library: LibrarySummary): string {
   return `${name}${code}${address}`;
 }
 
+function firstVisitCandidate(library: NearbyLibrary): string {
+  const [candidate] = buildOperatingHourVisitCandidates(library.operatingTime);
+  return candidate ? `${candidate.label} ${candidate.time}` : "운영시간 확인 필요";
+}
+
 function inferRegionCodeFromAddress(address: string): string | undefined {
   const normalized = normalizeLookupText(address);
   const entries: Array<[string, string]> = [
@@ -1011,6 +1130,25 @@ function optionalString(args: Record<string, unknown>, key: string): string | un
   const value = args[key];
   if (value === undefined || value === null) return undefined;
   return String(value).trim() || undefined;
+}
+
+function optionalNumber(args: Record<string, unknown>, key: string): number | undefined {
+  const value = args[key];
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(String(value).trim());
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function isValidLatitude(value: number): boolean {
+  return Number.isFinite(value) && value >= -90 && value <= 90;
+}
+
+function isValidLongitude(value: number): boolean {
+  return Number.isFinite(value) && value >= -180 && value <= 180;
 }
 
 function formatToolError(error: unknown): string {
