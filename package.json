@@ -2,6 +2,7 @@
   "name": "library-quiet-spot-mcp",
   "version": "0.1.0",
   "description": "LibraryQuietSpot MCP server using Data4Library open data.",
+  "license": "MIT",
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
