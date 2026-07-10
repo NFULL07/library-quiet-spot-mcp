@@ -21,6 +21,7 @@ app.get("/ready", (_req, res) => {
   res.status(ready ? 200 : 503).json({
     ready,
     authKeyConfigured: ready,
+    kakaoRestApiKeyConfigured: client.hasKakaoRestApiKey(),
     cacheSize: client.cacheSize
   });
 });

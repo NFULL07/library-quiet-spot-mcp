@@ -407,7 +407,10 @@ export class Data4LibraryClient {
         throw error;
       });
       if (!response.ok) {
-        throw new Error(`Kakao Local returned HTTP ${response.status}`);
+        const errorBody = await response.text().catch(() => "");
+        throw new Error(
+          `Kakao Local returned HTTP ${response.status}${errorBody ? `: ${truncateErrorBody(errorBody)}` : ""}`
+        );
       }
       const parsed = await response.json() as unknown;
       this.cache.set(cacheKey, parsed);
@@ -676,6 +679,10 @@ function asObject(value: unknown): XmlObject | undefined {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function truncateErrorBody(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
 function haversineKm(
