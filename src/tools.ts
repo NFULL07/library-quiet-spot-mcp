@@ -423,6 +423,11 @@ async function resolveSingleBook(
     };
   }
 
+  const selected = selectBestBookMatch(bookTitle, isbnBooks);
+  if (selected) {
+    return { kind: "book", book: selected };
+  }
+
   if (isbnBooks.length > 1) {
     const rows = isbnBooks.slice(0, 10).map((book, index) => [
       String(index + 1),
@@ -445,6 +450,76 @@ async function resolveSingleBook(
   }
 
   return { kind: "book", book: isbnBooks[0] };
+}
+
+function selectBestBookMatch(query: string, books: BookSummary[]): BookSummary | undefined {
+  const normalizedQuery = normalizeLookupText(query);
+  const exactWorkCandidates = books.filter((book) => normalizeBookBaseTitle(book.title) === normalizedQuery);
+  const candidates = exactWorkCandidates.length > 0 ? exactWorkCandidates : books;
+
+  if (candidates.length === 1) return candidates[0];
+
+  const groups = new Map<string, BookSummary[]>();
+  for (const book of candidates) {
+    const key = `${normalizeBookBaseTitle(book.title)}:${normalizeAuthorKey(book.authors)}`;
+    const group = groups.get(key) ?? [];
+    group.push(book);
+    groups.set(key, group);
+  }
+
+  const sortedGroups = [...groups.values()].sort((a, b) => b.length - a.length);
+  const [largest, second] = sortedGroups;
+  if (!largest) return undefined;
+
+  const hasDominantWork = !second || largest.length > second.length;
+  const queryMatchesLargestWork = normalizeBookBaseTitle(largest[0].title) === normalizedQuery;
+  if (queryMatchesLargestWork && hasDominantWork) {
+    return chooseRepresentativeBook(largest);
+  }
+
+  const exactTitleMatches = candidates.filter((book) => normalizeLookupText(book.title) === normalizedQuery);
+  if (exactTitleMatches.length === 1) return exactTitleMatches[0];
+
+  return undefined;
+}
+
+function chooseRepresentativeBook(books: BookSummary[]): BookSummary {
+  const publisherFrequency = new Map<string, number>();
+  for (const book of books) {
+    const publisher = normalizeLookupText(book.publisher);
+    if (!publisher) continue;
+    publisherFrequency.set(publisher, (publisherFrequency.get(publisher) ?? 0) + 1);
+  }
+
+  return books
+    .map((book, index) => ({ book, index, score: scoreRepresentativeBook(book, publisherFrequency) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)[0].book;
+}
+
+function scoreRepresentativeBook(book: BookSummary, publisherFrequency: Map<string, number>): number {
+  const title = normalizeLookupText(book.title);
+  const publisher = normalizeLookupText(book.publisher);
+  const year = Number.parseInt(book.publicationYear, 10);
+  let score = 0;
+
+  score += (publisherFrequency.get(publisher) ?? 0) * 20;
+  if (!/(큰글자|대활자|큰글씨|오디오북|전자책|ebook)/i.test(`${book.title} ${book.volume}`)) score += 80;
+  if (book.loanCount !== undefined) score += Math.min(book.loanCount, 1000);
+  if (Number.isFinite(year)) score += Math.max(0, 2100 - year);
+  if (!title.includes("사용설명서") && !title.includes("초콜릿왈츠")) score += 10;
+
+  return score;
+}
+
+function normalizeBookBaseTitle(title: string): string {
+  const withoutSubtitle = title.split(/[:：]/)[0] ?? title;
+  return normalizeLookupText(withoutSubtitle);
+}
+
+function normalizeAuthorKey(authors: string): string {
+  return normalizeLookupText(authors)
+    .replace(/지음|저자|글|옮김|번역|장편소설|소설/g, "")
+    .slice(0, 30);
 }
 
 async function generateReadingRoadmap(
