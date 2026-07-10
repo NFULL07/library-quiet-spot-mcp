@@ -22,6 +22,7 @@ app.get("/ready", (_req, res) => {
     ready,
     authKeyConfigured: ready,
     kakaoRestApiKeyConfigured: client.hasKakaoRestApiKey(),
+    aladinTtbKeyConfigured: client.hasAladinTtbKey(),
     cacheSize: client.cacheSize
   });
 });

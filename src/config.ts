@@ -2,6 +2,7 @@ export type AppConfig = {
   port: number;
   authKey?: string;
   kakaoRestApiKey?: string;
+  aladinTtbKey?: string;
   cacheTtlMs: number;
   requestTimeoutMs: number;
 };
@@ -18,6 +19,7 @@ export function loadConfig(): AppConfig {
     port: readPositiveInt("PORT", 3000),
     authKey: process.env.DATA4LIBRARY_AUTH_KEY?.trim() || undefined,
     kakaoRestApiKey: process.env.KAKAO_REST_API_KEY?.trim() || undefined,
+    aladinTtbKey: process.env.ALADIN_TTB_KEY?.trim() || undefined,
     cacheTtlMs: readPositiveInt("CACHE_TTL_SECONDS", 60 * 60 * 6) * 1000,
     requestTimeoutMs: readPositiveInt("REQUEST_TIMEOUT_MS", 5000)
   };

@@ -1,4 +1,4 @@
-import { Data4LibraryClient, MissingAuthKeyError, MissingKakaoRestApiKeyError, BookSummary, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult, NearbyLibrary, PlaceSummary } from "./data4library.js";
+import { Data4LibraryClient, MissingAuthKeyError, MissingKakaoRestApiKeyError, BookSummary, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult, NearbyLibrary, PlaceSummary, AladinBook } from "./data4library.js";
 import { guardMarkdown, markdownTable } from "./text.js";
 
 export type ToolDefinition = {
@@ -15,6 +15,64 @@ export type ToolDefinition = {
 };
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    name: "recommend_books_for_child",
+    description:
+      "Recommends child-appropriate books from Data4Library age-group loan data, optionally augments candidates with Aladin bookstore metadata, and checks holdings at a named or nearby library.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        age: {
+          type: "number",
+          description: "Child age, such as 9."
+        },
+        grade: {
+          type: "string",
+          description: "Child grade or school stage, such as 초등학교 3학년, 7살, 중학생."
+        },
+        interests: {
+          type: "string",
+          description: "Optional interests as comma-separated Korean keywords, such as 과학, 모험, 역사, 그림책."
+        },
+        library_name: {
+          type: "string",
+          description: "Optional library name to check holdings."
+        },
+        library_code: {
+          type: "string",
+          description: "Optional Data4Library library code. Use only when already known."
+        },
+        place_name: {
+          type: "string",
+          description: "Optional place name to find nearby libraries, such as 부산 서면역 or 대구 동성로. Requires KAKAO_REST_API_KEY."
+        },
+        latitude: {
+          type: "number",
+          description: "Optional latitude for nearby-library search when place_name is not provided."
+        },
+        longitude: {
+          type: "number",
+          description: "Optional longitude for nearby-library search when place_name is not provided."
+        },
+        region: {
+          type: "string",
+          description: "Optional Data4Library region code. If omitted, the tool infers it from a resolved library address when possible."
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of recommendations. Defaults to 5 and is capped at 8."
+        }
+      },
+      additionalProperties: false
+    },
+    annotations: {
+      title: "Recommend books for a child",
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+      idempotentHint: true
+    }
+  },
   {
     name: "find_nearby_libraries",
     description:
@@ -182,6 +240,22 @@ export async function callTool(
 ): Promise<string> {
   try {
     switch (name) {
+      case "recommend_books_for_child":
+        return guardMarkdown(
+          await recommendBooksForChild(
+            client,
+            optionalNumber(args, "age"),
+            optionalString(args, "grade"),
+            optionalStringList(args, "interests"),
+            optionalString(args, "library_name"),
+            optionalString(args, "library_code"),
+            optionalString(args, "place_name"),
+            optionalNumber(args, "latitude"),
+            optionalNumber(args, "longitude"),
+            optionalString(args, "region"),
+            optionalNumber(args, "limit")
+          )
+        );
       case "find_nearby_libraries":
         return guardMarkdown(
           await findNearbyLibraries(
@@ -235,6 +309,102 @@ export async function callTool(
   } catch (error) {
     return formatToolError(error);
   }
+}
+
+async function recommendBooksForChild(
+  client: Data4LibraryClient,
+  age: number | undefined,
+  grade: string | undefined,
+  interests: string[],
+  libraryName: string | undefined,
+  libraryCode: string | undefined,
+  placeName: string | undefined,
+  latitude: number | undefined,
+  longitude: number | undefined,
+  region: string | undefined,
+  limit: number | undefined
+): Promise<string> {
+  const profile = resolveChildReadingProfile(age, grade);
+  if (!profile) {
+    return [
+      "## 자녀 맞춤 추천을 만들 수 없습니다",
+      "",
+      "자녀의 나이 또는 학년을 입력해 주세요.",
+      "",
+      "- 예: `초등학교 3학년 아이가 과학 좋아하는데 책 추천해줘`",
+      "- 예: `7살 아이랑 부산 서면역 근처 도서관 갈 건데 그림책 추천해줘`"
+    ].join("\n");
+  }
+
+  const safeLimit = Math.round(clampNumber(limit ?? 5, 3, 8));
+  const libraryTarget = await resolveLibraryTargets(client, libraryName, libraryCode, placeName, latitude, longitude);
+  if (libraryTarget.kind === "message") return libraryTarget.markdown;
+
+  const effectiveRegion = region
+    ?? libraryTarget.libraries.map((library) => inferRegionCodeFromAddress(library.address)).find(Boolean);
+  const popularBooks = await client.getPopularBooks(effectiveRegion, profile.ageGroupCode);
+  if (popularBooks.length === 0) {
+    return [
+      "## 자녀 맞춤 추천 후보를 찾지 못했습니다",
+      "",
+      `- 독자 기준: ${profile.label}`,
+      effectiveRegion ? `- 지역 코드: \`${effectiveRegion}\`` : "- 지역 코드: 전국",
+      "",
+      "정보나루 연령대별 인기 대출 데이터에 조건과 맞는 응답이 없습니다. 관심사를 줄이거나 지역 조건 없이 다시 시도해 주세요."
+    ].join("\n");
+  }
+
+  const augmented = await Promise.all(
+    popularBooks.slice(0, 10).map(async (book, index) => {
+      const aladin = await findAladinMatch(client, book).catch(() => undefined);
+      const interestScore = scoreInterestMatch(book, aladin, interests);
+      const aladinBoost = aladin?.bestRank ? Math.max(0, 80 - Math.min(aladin.bestRank, 80)) : 0;
+      return {
+        book,
+        ranking: book.ranking ?? index + 1,
+        aladin,
+        interestScore,
+        score: 1000 - ((book.ranking ?? index + 1) * 20) + interestScore + aladinBoost
+      };
+    })
+  );
+
+  const recommendations = augmented
+    .sort((a, b) => b.score - a.score || a.ranking - b.ranking)
+    .slice(0, safeLimit);
+
+  const holdingRows = await buildChildRecommendationRows(client, recommendations, libraryTarget.libraries, profile, interests);
+  const topBook = recommendations[0]?.book;
+  const nextBooks = topBook?.isbn13
+    ? collectCompanionBooks(await client.getUsageAnalysis(topBook.isbn13).catch(() => undefined)).slice(0, 3)
+    : [];
+  const visitMarkdown = libraryTarget.libraries[0]
+    ? await renderBestVisitTime(client, libraryTarget.libraries[0]).catch(() => "")
+    : "";
+
+  return [
+    "## 자녀 맞춤 도서 추천",
+    "",
+    `독자 기준: ${profile.label}`,
+    interests.length > 0 ? `관심사: ${interests.join(", ")}` : "관심사: 지정 없음",
+    effectiveRegion ? `정보나루 지역 코드: \`${effectiveRegion}\`` : "정보나루 지역 코드: 전국",
+    libraryTarget.summary,
+    "",
+    "정보나루 연령대별 인기 대출 데이터를 기본 후보로 사용하고, `ALADIN_TTB_KEY`가 설정된 경우 알라딘 책 소개/분야/베스트셀러 순위를 보조 근거로 더했습니다.",
+    "",
+    markdownTable(["순위", "추천 도서", "추천 근거", "서점 보강", "도서관 소장/대출"], holdingRows),
+    "",
+    "## 같이 빌리기 좋은 다음 책",
+    "",
+    nextBooks.length > 0
+      ? nextBooks.map((item) => `- ${formatBookTitle(item.book)} - ${item.source} 데이터 기반`).join("\n")
+      : "- 기준 도서의 정보나루 이용분석 응답에 함께 추천할 책이 없습니다.",
+    "",
+    libraryTarget.libraries.length > 0 ? "## 방문 후보" : "",
+    libraryTarget.libraries.length > 0 ? summarizeVisitMarkdown(visitMarkdown) : "",
+    "",
+    "이 추천은 자녀의 독서 수준을 확정 판단하지 않고, 실제 대출 데이터와 서점 메타데이터를 바탕으로 고를 만한 후보를 좁혀 줍니다."
+  ].filter((line) => line !== "").join("\n");
 }
 
 async function findNearbyLibraries(
@@ -533,6 +703,226 @@ async function findTrendingBooksAndLibraryMatch(
     "",
     visitSummary
   ].join("\n");
+}
+
+type ChildReadingProfile = {
+  label: string;
+  ageGroupCode: string;
+};
+
+type LibraryTargetResolution =
+  | { kind: "libraries"; libraries: LibrarySummary[]; summary: string }
+  | { kind: "message"; markdown: string };
+
+type ChildRecommendationCandidate = {
+  book: BookSummary;
+  ranking: number;
+  aladin?: AladinBook;
+  interestScore: number;
+  score: number;
+};
+
+function resolveChildReadingProfile(age: number | undefined, grade: string | undefined): ChildReadingProfile | undefined {
+  const gradeText = grade ? normalizeLookupText(grade) : "";
+  if (gradeText) {
+    if (/유아|유치|미취학|영유아/.test(gradeText)) {
+      return { label: grade ?? "미취학 아동", ageGroupCode: "6" };
+    }
+    if (/초등|초등학생|초/.test(gradeText)) {
+      return { label: grade ?? "초등학생", ageGroupCode: "8" };
+    }
+    if (/중등|중학생|중학교|고등|고등학생|고등학교|청소년/.test(gradeText)) {
+      return { label: grade ?? "청소년", ageGroupCode: "14" };
+    }
+  }
+
+  if (age === undefined) return undefined;
+  const roundedAge = Math.round(age);
+  if (roundedAge <= 7) return { label: `${roundedAge}살`, ageGroupCode: "6" };
+  if (roundedAge <= 13) return { label: `${roundedAge}살`, ageGroupCode: "8" };
+  if (roundedAge <= 19) return { label: `${roundedAge}살`, ageGroupCode: "14" };
+  if (roundedAge < 30) return { label: `${roundedAge}살`, ageGroupCode: "20" };
+  return { label: `${roundedAge}살`, ageGroupCode: String(Math.floor(roundedAge / 10) * 10) };
+}
+
+async function resolveLibraryTargets(
+  client: Data4LibraryClient,
+  libraryName: string | undefined,
+  libraryCode: string | undefined,
+  placeName: string | undefined,
+  latitude: number | undefined,
+  longitude: number | undefined
+): Promise<LibraryTargetResolution> {
+  if (libraryName || libraryCode) {
+    const resolved = await resolveSingleLibrary(client, libraryName, libraryCode);
+    if (resolved.kind === "message") return { kind: "message", markdown: resolved.markdown };
+    return {
+      kind: "libraries",
+      libraries: [resolved.library],
+      summary: `도서관: ${formatLibrary(resolved.library)}`
+    };
+  }
+
+  let resolvedPlace: PlaceSummary | undefined;
+  let resolvedLatitude = latitude;
+  let resolvedLongitude = longitude;
+  if (placeName && (resolvedLatitude === undefined || resolvedLongitude === undefined)) {
+    const places = await client.searchPlace(placeName);
+    resolvedPlace = places[0];
+    if (!resolvedPlace) {
+      return {
+        kind: "message",
+        markdown: [
+          "## 장소를 찾을 수 없습니다",
+          "",
+          `\`${placeName}\`으로 검색된 장소가 없습니다.`,
+          "",
+          "장소명을 더 구체적으로 입력하거나 도서관 이름을 직접 입력해 주세요."
+        ].join("\n")
+      };
+    }
+    resolvedLatitude = resolvedPlace.latitude;
+    resolvedLongitude = resolvedPlace.longitude;
+  }
+
+  if (resolvedLatitude === undefined || resolvedLongitude === undefined) {
+    return {
+      kind: "libraries",
+      libraries: [],
+      summary: "도서관: 지정 없음"
+    };
+  }
+
+  if (!isValidLatitude(resolvedLatitude) || !isValidLongitude(resolvedLongitude)) {
+    return {
+      kind: "message",
+      markdown: [
+        "## 위치 좌표가 올바르지 않습니다",
+        "",
+        `- latitude: ${resolvedLatitude}`,
+        `- longitude: ${resolvedLongitude}`,
+        "- 위도는 -90~90, 경도는 -180~180 범위여야 합니다."
+      ].join("\n")
+    };
+  }
+
+  const libraries = await client.searchNearbyLibraries(resolvedLatitude, resolvedLongitude, 5, 3);
+  const basis = resolvedPlace ? `기준 장소: ${formatPlace(resolvedPlace)}` : `기준 좌표: ${resolvedLatitude}, ${resolvedLongitude}`;
+  return {
+    kind: "libraries",
+    libraries,
+    summary: libraries.length > 0
+      ? `${basis}\n근처 도서관: ${libraries.map((library) => `${library.name}(${library.distanceKm.toFixed(2)}km)`).join(", ")}`
+      : `${basis}\n근처 도서관: 검색 반경 5km 안에서 찾지 못함`
+  };
+}
+
+async function findAladinMatch(client: Data4LibraryClient, book: BookSummary): Promise<AladinBook | undefined> {
+  const query = book.title || book.isbn13;
+  if (!query) return undefined;
+  const aladinBooks = await client.searchAladinBooks(query, 5);
+  if (aladinBooks.length === 0) return undefined;
+
+  const normalizedTitle = normalizeBookBaseTitle(book.title);
+  const exactIsbn = aladinBooks.find((item) => item.isbn13 && item.isbn13 === book.isbn13);
+  if (exactIsbn) return exactIsbn;
+
+  return aladinBooks.find((item) => normalizeBookBaseTitle(item.title) === normalizedTitle)
+    ?? aladinBooks[0];
+}
+
+async function buildChildRecommendationRows(
+  client: Data4LibraryClient,
+  recommendations: ChildRecommendationCandidate[],
+  libraries: LibrarySummary[],
+  profile: ChildReadingProfile,
+  interests: string[]
+): Promise<string[][]> {
+  return Promise.all(recommendations.map(async (candidate, index) => {
+    const holdings = libraries.length > 0
+      ? await Promise.all(libraries.map(async (library) => ({
+          library,
+          exist: candidate.book.isbn13
+            ? await client.getBookExist(library.code, candidate.book.isbn13).catch(() => undefined)
+            : undefined
+        })))
+      : [];
+
+    const reasons = [
+      `${profile.label} 연령대 인기 대출 ${candidate.ranking}위권`,
+      candidate.interestScore > 0 ? `관심사(${interests.join(", ")})와 내용/분야 매칭` : "",
+      candidate.aladin?.bestRank ? `알라딘 베스트셀러 순위 ${candidate.aladin.bestRank}` : ""
+    ].filter(Boolean).join("<br>");
+
+    return [
+      String(index + 1),
+      formatBookTitle(candidate.book),
+      reasons || "연령대 대출 데이터 기반",
+      formatAladinAugmentation(candidate.aladin, client.hasAladinTtbKey()),
+      formatLibraryHoldings(holdings)
+    ];
+  }));
+}
+
+function formatAladinAugmentation(aladin: AladinBook | undefined, configured: boolean): string {
+  if (!configured) return "ALADIN_TTB_KEY 미설정";
+  if (!aladin) return "알라딘 매칭 없음";
+
+  const parts = [
+    aladin.categoryName ? `분야: ${aladin.categoryName}` : "",
+    aladin.description ? `소개: ${aladin.description.slice(0, 80)}` : "",
+    aladin.bestRank ? `베스트셀러 ${aladin.bestRank}위` : "",
+    aladin.link ? `[상세](${aladin.link})` : ""
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join("<br>") : "알라딘 기본 정보 확인";
+}
+
+function formatLibraryHoldings(holdings: Array<{ library: LibrarySummary; exist?: BookExistResult }>): string {
+  if (holdings.length === 0) return "도서관 지정 시 확인 가능";
+  return holdings.map(({ library, exist }) => (
+    `${library.name}: ${formatExistStatus(exist?.hasBook)} / ${formatLoanStatus(exist?.loanAvailable)}`
+  )).join("<br>");
+}
+
+function scoreInterestMatch(book: BookSummary, aladin: AladinBook | undefined, interests: string[]): number {
+  if (interests.length === 0) return 0;
+  const searchable = normalizeLookupText([
+    book.title,
+    book.authors,
+    book.publisher,
+    aladin?.title,
+    aladin?.authors,
+    aladin?.publisher,
+    aladin?.description,
+    aladin?.categoryName
+  ].filter(Boolean).join(" "));
+
+  let score = 0;
+  for (const interest of interests) {
+    const keywords = interestKeywords(interest);
+    if (keywords.some((keyword) => searchable.includes(normalizeLookupText(keyword)))) {
+      score += 120;
+    }
+  }
+  return score;
+}
+
+function interestKeywords(interest: string): string[] {
+  const normalized = normalizeLookupText(interest);
+  const groups: Record<string, string[]> = {
+    과학: ["과학", "실험", "우주", "수학", "생물", "공룡", "로봇", "자연", "환경"],
+    모험: ["모험", "탐험", "여행", "판타지", "미스터리", "마법", "성장"],
+    문학: ["문학", "동화", "소설", "이야기", "명작", "창작"],
+    역사: ["역사", "한국사", "세계사", "조선", "인물", "위인"],
+    그림책: ["그림책", "유아", "창작그림책", "그림동화"],
+    사회: ["사회", "경제", "문화", "철학", "정치"],
+    예술: ["예술", "음악", "미술", "그림", "디자인"]
+  };
+
+  for (const [key, keywords] of Object.entries(groups)) {
+    if (normalized.includes(normalizeLookupText(key))) return keywords;
+  }
+  return [interest];
 }
 
 type LibraryResolution =
@@ -1163,6 +1553,16 @@ function optionalString(args: Record<string, unknown>, key: string): string | un
   const value = args[key];
   if (value === undefined || value === null) return undefined;
   return String(value).trim() || undefined;
+}
+
+function optionalStringList(args: Record<string, unknown>, key: string): string[] {
+  const value = args[key];
+  if (value === undefined || value === null) return [];
+  const rawValues = Array.isArray(value) ? value : String(value).split(/[,/]/);
+  return rawValues
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .slice(0, 6);
 }
 
 function optionalNumber(args: Record<string, unknown>, key: string): number | undefined {

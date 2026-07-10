@@ -82,6 +82,19 @@ export type PopularBook = BookSummary & {
   ranking?: number;
 };
 
+export type AladinBook = {
+  title: string;
+  authors: string;
+  publisher: string;
+  pubDate: string;
+  isbn13: string;
+  description: string;
+  cover: string;
+  link: string;
+  categoryName: string;
+  bestRank?: number;
+};
+
 type XmlObject = Record<string, unknown>;
 
 export class MissingAuthKeyError extends Error {
@@ -121,6 +134,10 @@ export class Data4LibraryClient {
 
   hasKakaoRestApiKey(): boolean {
     return Boolean(this.config.kakaoRestApiKey);
+  }
+
+  hasAladinTtbKey(): boolean {
+    return Boolean(this.config.aladinTtbKey);
   }
 
   async searchPlace(placeName: string): Promise<PlaceSummary[]> {
@@ -298,7 +315,7 @@ export class Data4LibraryClient {
       region,
       age: ageGroup,
       pageNo: "1",
-      pageSize: "5"
+      pageSize: "10"
     });
     const response = this.responseOf(xml);
     const docs = asObject(response)?.docs;
@@ -322,6 +339,24 @@ export class Data4LibraryClient {
 
     return rawBooks
       .map(normalizeBook)
+      .filter((book) => book.title || book.isbn13);
+  }
+
+  async searchAladinBooks(query: string, limit = 3): Promise<AladinBook[]> {
+    if (!this.config.aladinTtbKey) return [];
+
+    const json = await this.requestAladinJson("ItemSearch.aspx", {
+      Query: query.trim(),
+      QueryType: "Keyword",
+      MaxResults: String(Math.max(1, Math.min(limit, 10))),
+      start: "1",
+      SearchTarget: "Book",
+      output: "js",
+      Version: "20131101"
+    });
+    const root = asObject(json) ?? {};
+    return ensureArray(root.item)
+      .map(normalizeAladinBook)
       .filter((book) => book.title || book.isbn13);
   }
 
@@ -420,6 +455,49 @@ export class Data4LibraryClient {
     }
   }
 
+  private async requestAladinJson(
+    endpoint: string,
+    params: Record<string, string | undefined>
+  ): Promise<unknown> {
+    if (!this.config.aladinTtbKey) return {};
+
+    const url = new URL(`https://www.aladin.co.kr/ttb/api/${endpoint}`);
+    url.searchParams.set("ttbkey", this.config.aladinTtbKey);
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") url.searchParams.set(key, value);
+    }
+
+    const cacheKeyParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") cacheKeyParams.set(key, value);
+    }
+    const cacheKey = `aladin:${endpoint}?${cacheKeyParams.toString()}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+    try {
+      const response = await fetch(url, { signal: controller.signal }).catch((error: unknown) => {
+        if (isAbortError(error)) {
+          throw new Error(`Aladin OpenAPI request timed out after ${this.config.requestTimeoutMs}ms`);
+        }
+        throw error;
+      });
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => "");
+        throw new Error(
+          `Aladin OpenAPI returned HTTP ${response.status}${errorBody ? `: ${truncateErrorBody(errorBody)}` : ""}`
+        );
+      }
+      const parsed = await response.json() as unknown;
+      this.cache.set(cacheKey, parsed);
+      return parsed;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private responseOf(xml: unknown): unknown {
     const root = asObject(xml);
     return root?.response ?? xml;
@@ -441,6 +519,22 @@ function normalizeBook(value: unknown): BookSummary {
     volume: cleanText(item.vol ?? item.volume),
     imageUrl: cleanText(item.bookImageURL ?? item.bookImageUrl ?? item.imageUrl),
     loanCount: numberFrom(item.loanCnt ?? item.loanCount)
+  };
+}
+
+function normalizeAladinBook(value: unknown): AladinBook {
+  const item = asObject(value) ?? {};
+  return {
+    title: cleanText(item.title),
+    authors: cleanText(item.author),
+    publisher: cleanText(item.publisher),
+    pubDate: cleanText(item.pubDate),
+    isbn13: cleanText(item.isbn13 ?? item.isbn),
+    description: cleanText(item.description),
+    cover: cleanText(item.cover),
+    link: cleanText(item.link),
+    categoryName: cleanText(item.categoryName),
+    bestRank: numberFrom(item.bestRank)
   };
 }
 
