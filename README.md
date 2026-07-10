@@ -1,5 +1,7 @@
 # 도서관 책길잡이 MCP (LibraryQuietSpot)
 
+![도서관 책길잡이 대표 이미지](assets/playmcp-cover.png)
+
 도서관 책길잡이 MCP는 Data4Library(도서관 정보나루) Open API의 실측 데이터를 가공해
 "이 책을 어디서 빌릴 수 있는지", "언제 방문하면 덜 붐비는지", "다 읽고 무엇을 읽으면 좋은지"를
 MCP 도구로 제공하는 Node.js/TypeScript 서버입니다.
