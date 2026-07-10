@@ -18,7 +18,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "find_best_visit_time",
     description:
-      "Calculates quieter visiting times for a named library using Data4Library(도서관 정보나루) usageTrend data for LibraryQuietSpot(도서관혼잡도). Returns markdown, not raw API JSON.",
+      "Plans practical library visit windows from Data4Library(도서관 정보나루). Uses usageTrend when available; otherwise derives visit candidates from official operating hours and closed-day data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -34,7 +34,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       additionalProperties: false
     },
     annotations: {
-      title: "Find quieter library visit times",
+      title: "Plan library visit windows",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -44,7 +44,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "find_trending_books_and_library_match",
     description:
-      "Finds popular books from Data4Library(도서관 정보나루), checks whether a named library owns them, and combines the result with LibraryQuietSpot(도서관혼잡도) visit-time guidance.",
+      "Finds current popular books from Data4Library(도서관 정보나루), checks whether a named library owns them, and adds practical visit-window guidance.",
     inputSchema: {
       type: "object",
       properties: {
@@ -78,7 +78,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "generate_data_driven_reading_roadmap",
     description:
-      "Builds a measured reading roadmap from a book title or ISBN using Data4Library(도서관 정보나루) usageAnalysisList co-loan, mania, and reader recommendation data for LibraryQuietSpot(도서관혼잡도).",
+      "Builds a measured next-reading roadmap from a book title or ISBN using Data4Library(도서관 정보나루) usageAnalysisList co-loan, mania, and reader recommendation data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -645,8 +645,17 @@ function summarizeVisitMarkdown(markdown: string): string {
     return "- 방문 시간 정보는 확인하지 못했습니다.";
   }
 
-  if (markdown.includes("## 방문 시간 데이터")) {
-    return "- 이 도서관의 `usageTrend` 시간대/요일 지표는 제공되지 않아 한산한 시간 순위는 계산하지 않았습니다.";
+  if (markdown.includes("## 운영시간 기반 방문 후보")) {
+    const lines = markdown.split("\n");
+    const tableStart = lines.findIndex((line) => line.startsWith("| 후보 |"));
+    if (tableStart !== -1) {
+      return [
+        "실측 혼잡도 대신 운영시간으로 계산한 방문 후보입니다.",
+        "",
+        ...lines.slice(tableStart, tableStart + 5)
+      ].join("\n");
+    }
+    return "- 실측 혼잡도 대신 운영시간으로 방문 후보를 계산했습니다.";
   }
 
   const lines = markdown.split("\n");
@@ -662,6 +671,12 @@ function summarizeVisitMarkdown(markdown: string): string {
 }
 
 function renderVisitTimeFallback(library: LibrarySummary): string {
+  const candidates = buildOperatingHourVisitCandidates(library.operatingTime);
+  const candidateRows = candidates.map((candidate) => [
+    candidate.label,
+    candidate.time,
+    candidate.reason
+  ]);
   const infoRows = [
     ["도서관", formatLibrary(library)],
     ["운영시간", library.operatingTime || "정보나루 기본정보 응답에 없음"],
@@ -670,18 +685,115 @@ function renderVisitTimeFallback(library: LibrarySummary): string {
     ["홈페이지", library.homepage || "정보나루 기본정보 응답에 없음"]
   ];
 
+  const candidateBlock = candidateRows.length > 0
+    ? [
+        markdownTable(["후보", "시간대", "근거"], candidateRows),
+        "",
+        "위 후보는 실시간 좌석/방문자 수가 아니라 정보나루 운영시간을 기준으로 계산한 방문 계획입니다."
+      ].join("\n")
+    : [
+        "운영시간을 시간대 형식으로 해석하지 못해 자동 방문 후보를 만들 수 없습니다.",
+        "아래 기본정보를 확인해 방문 시간을 정해 주세요."
+      ].join("\n");
+
   return [
-    "## 방문 시간 데이터",
+    "## 운영시간 기반 방문 후보",
     "",
-    "정보나루 `usageTrend` 응답에 이 도서관의 시간대별/요일별 지표가 없어 한산한 시간 순위를 계산할 수 없습니다.",
-    "대신 도서관 이름 검색으로 확인한 실제 기본정보를 함께 제공합니다.",
+    "정보나루 `usageTrend` 시간대/요일 지표는 제공되지 않았습니다.",
+    "그래서 혼잡도를 지어내지 않고, 정보나루 도서관 기본정보의 운영시간을 파싱해 방문 후보를 계산했습니다.",
+    "",
+    candidateBlock,
     "",
     markdownTable(["항목", "값"], infoRows),
     "",
-    "- 혼잡도 수치가 없는 도서관은 임의로 한산한 시간을 추측하지 않습니다.",
-    "- 같은 질문에 도서관 코드가 아닌 정확한 도서관 이름을 넣으면, 가능한 경우 기본정보까지 포함해 다시 확인합니다.",
+    "- 실측 혼잡도 순위가 있는 도서관은 `usageTrend` 기반 TOP 3로 표시합니다.",
+    "- 실측 혼잡도 데이터가 없는 도서관은 운영시간 기반 방문 후보로 표시합니다.",
     "- 인기 도서 소장 여부와 다음 독서 후보 기능은 `loanItemSrch`, `bookExist`, `usageAnalysisList` 데이터를 별도로 조회합니다."
   ].join("\n");
+}
+
+type VisitCandidate = {
+  label: string;
+  time: string;
+  reason: string;
+};
+
+type TimeRange = {
+  startMinutes: number;
+  endMinutes: number;
+};
+
+function buildOperatingHourVisitCandidates(operatingTime: string): VisitCandidate[] {
+  const ranges = extractTimeRanges(operatingTime);
+  if (ranges.length === 0) return [];
+
+  const mainRange = ranges
+    .filter((range) => range.endMinutes > range.startMinutes)
+    .sort((a, b) => (b.endMinutes - b.startMinutes) - (a.endMinutes - a.startMinutes))[0];
+  if (!mainRange) return [];
+
+  const candidates: VisitCandidate[] = [];
+  const openingEnd = Math.min(mainRange.startMinutes + 90, mainRange.endMinutes);
+  if (openingEnd > mainRange.startMinutes) {
+    candidates.push({
+      label: "개관 직후",
+      time: `${formatMinutes(mainRange.startMinutes)}-${formatMinutes(openingEnd)}`,
+      reason: "운영 시작 직후라 자료 탐색과 좌석 선택 계획을 세우기 좋습니다."
+    });
+  }
+
+  const duration = mainRange.endMinutes - mainRange.startMinutes;
+  if (duration >= 360) {
+    const midStart = mainRange.startMinutes + Math.floor(duration * 0.4 / 30) * 30;
+    const midEnd = Math.min(midStart + 90, mainRange.endMinutes);
+    if (midEnd > midStart) {
+      candidates.push({
+        label: "중간 시간대",
+        time: `${formatMinutes(midStart)}-${formatMinutes(midEnd)}`,
+        reason: "개관/폐관 경계 시간을 피한 운영시간 중간 구간입니다."
+      });
+    }
+  }
+
+  const lateStart = Math.max(mainRange.endMinutes - 120, mainRange.startMinutes);
+  const lateEnd = Math.max(mainRange.endMinutes - 30, lateStart);
+  if (lateEnd > lateStart) {
+    candidates.push({
+      label: "폐관 전 여유 구간",
+      time: `${formatMinutes(lateStart)}-${formatMinutes(lateEnd)}`,
+      reason: "폐관 직전 30분은 피하고, 짧은 반납/대출 동선을 잡기 좋은 구간입니다."
+    });
+  }
+
+  return candidates.slice(0, 3);
+}
+
+function extractTimeRanges(text: string): TimeRange[] {
+  const ranges: TimeRange[] = [];
+  const pattern = /(\d{1,2})\s*(?::|시)\s*(\d{2})?\s*(?:-|~|–|—|부터|－)\s*(\d{1,2})\s*(?::|시)\s*(\d{2})?/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const startHour = Number.parseInt(match[1] ?? "", 10);
+    const startMinute = Number.parseInt(match[2] ?? "0", 10);
+    const endHour = Number.parseInt(match[3] ?? "", 10);
+    const endMinute = Number.parseInt(match[4] ?? "0", 10);
+    if (!isValidTime(startHour, startMinute) || !isValidTime(endHour, endMinute)) continue;
+    ranges.push({
+      startMinutes: startHour * 60 + startMinute,
+      endMinutes: endHour * 60 + endMinute
+    });
+  }
+  return ranges;
+}
+
+function isValidTime(hour: number, minute: number): boolean {
+  return Number.isInteger(hour) && Number.isInteger(minute) && hour >= 0 && hour <= 24 && minute >= 0 && minute < 60;
+}
+
+function formatMinutes(totalMinutes: number): string {
+  const hour = Math.floor(totalMinutes / 60);
+  const minute = totalMinutes % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function renderBookSection(title: string, subtitle: string, books: BookSummary[]): string {

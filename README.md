@@ -1,9 +1,9 @@
-# 도서관 책길잡이 MCP (LibraryQuietSpot)
+# 도서관 책길잡이 MCP (Library Book Guide)
 
 ![도서관 책길잡이 대표 이미지](assets/playmcp-cover.png)
 
 도서관 책길잡이 MCP는 Data4Library(도서관 정보나루) Open API의 실측 데이터를 가공해
-"이 책을 어디서 빌릴 수 있는지", "이용 추이 데이터가 있는 도서관은 언제 방문하면 덜 붐비는지",
+"요즘 인기 있는 책이 우리 도서관에 있는지", "운영시간 기준으로 언제 방문 계획을 잡기 좋은지",
 "다 읽고 무엇을 읽으면 좋은지"를 MCP 도구로 제공하는 Node.js/TypeScript 서버입니다.
 
 사용자는 도서관 코드를 몰라도 됩니다. `정독도서관`, `마포중앙도서관`처럼 도서관 이름으로 질문하면
@@ -18,7 +18,7 @@
 - 인기 도서, 소장 여부, 이용 분석 데이터가 서로 다른 API로 흩어져 있습니다.
 - API 응답은 XML 중심이라 LLM 도구 응답으로 그대로 보여주기 어렵습니다.
 - 일반 사용자는 정보나루 도서관 코드를 알기 어렵습니다.
-- "언제 가면 한산한가", "이 책 다음에 무엇을 읽을까" 같은 질문은 원본 조회만으로는 답하기 어렵습니다.
+- "요즘 뜨는 책이 이 도서관에 있는가", "오늘 방문 계획을 어떻게 잡을까", "이 책 다음에 무엇을 읽을까" 같은 질문은 원본 조회만으로는 답하기 어렵습니다.
 
 이 프로젝트는 공개 도서관 데이터를 MCP 도구 형태로 연결하고, 결과를 Markdown으로 정리해 대화형 사용 경험에 맞게 제공합니다.
 
@@ -26,13 +26,13 @@
 
 | Tool | What it does |
 |---|---|
-| `find_best_visit_time` | 도서관 이름을 검색해 이용 추이 데이터가 제공되는 경우 상대적으로 한산한 방문 시간대를 계산합니다. |
-| `find_trending_books_and_library_match` | 지역 인기 도서 상위 5권을 지정 도서관 이름의 소장 여부와 함께 보여줍니다. |
+| `find_best_visit_time` | 도서관 이름을 검색해 이용 추이 데이터가 있으면 상대적으로 한산한 시간대를 계산하고, 없으면 운영시간 기반 방문 후보를 제공합니다. |
+| `find_trending_books_and_library_match` | 지역 인기 도서 상위 5권을 지정 도서관의 소장/대출 가능 여부와 함께 보여줍니다. |
 | `generate_data_driven_reading_roadmap` | ISBN 기반 이용 분석에서 함께 대출된 책, 마니아 추천, 다독자 추천을 분리해 정리합니다. |
 
 ## Design Highlights
 
-- **Data-driven only**: 추천 문구를 임의 생성하지 않고 Data4Library API 응답에 있는 실측 지표만 사용합니다.
+- **Data-grounded answers**: 추천 도서와 소장 여부는 Data4Library API 응답을 사용하고, 방문 후보는 공식 운영시간을 파싱해 계산합니다.
 - **Name-first UX**: 도서관 이름을 입력받아 내부적으로 `libSrch` 검색 결과의 도서관 코드로 변환합니다.
 - **MCP-ready transport**: Streamable HTTP 기반 MCP 서버로 구현했습니다.
 - **Stateless startup**: 서버는 먼저 포트를 열고, 인증키나 외부 API 상태와 무관하게 `tools/list`가 동작하도록 구성했습니다.
