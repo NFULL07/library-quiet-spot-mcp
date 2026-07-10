@@ -76,6 +76,7 @@ export class MissingAuthKeyError extends Error {
 
 export class Data4LibraryClient {
   private readonly cache: TtlCache<unknown>;
+  private readonly librarySearchCache: TtlCache<LibrarySummary[]>;
   private readonly parser = new XMLParser({
     ignoreAttributes: false,
     trimValues: true,
@@ -85,6 +86,7 @@ export class Data4LibraryClient {
 
   constructor(private readonly config: AppConfig) {
     this.cache = new TtlCache(config.cacheTtlMs);
+    this.librarySearchCache = new TtlCache(config.cacheTtlMs);
   }
 
   get cacheSize(): number {
@@ -96,18 +98,46 @@ export class Data4LibraryClient {
   }
 
   async searchLibraries(libraryName: string): Promise<LibrarySummary[]> {
-    const xml = await this.requestXml("libSrch", {
-      libName: libraryName,
-      pageNo: "1",
-      pageSize: "10"
-    });
-    const response = this.responseOf(xml);
-    const libs = asObject(response)?.libs;
-    const rawLibraries = ensureArray(asObject(libs)?.lib ?? asObject(response)?.lib);
+    const query = libraryName.trim();
+    const cached = this.librarySearchCache.get(query);
+    if (cached) return cached;
 
-    return rawLibraries
-      .map(normalizeLibrary)
-      .filter((library) => library.code || library.name);
+    const firstPage = await this.getLibraryPage(1, query);
+    const firstPageMatches = filterLibrariesByName(query, firstPage);
+    if (hasExactLibraryMatch(query, firstPageMatches)) {
+      this.librarySearchCache.set(query, firstPageMatches);
+      return firstPageMatches;
+    }
+
+    const matches = new Map<string, LibrarySummary>();
+    for (const library of firstPageMatches) {
+      matches.set(library.code || library.name, library);
+    }
+
+    const pageSize = 100;
+    const maxPages = 60;
+    const seenPageSignatures = new Set<string>();
+    for (let pageNo = 1; pageNo <= maxPages; pageNo += 1) {
+      const page = pageNo === 1 ? await this.getLibraryPage(1, undefined, pageSize) : await this.getLibraryPage(pageNo, undefined, pageSize);
+      if (page.length === 0) break;
+      const pageSignature = page.map((library) => library.code || library.name).join("|");
+      if (seenPageSignatures.has(pageSignature)) break;
+      seenPageSignatures.add(pageSignature);
+
+      for (const library of filterLibrariesByName(query, page)) {
+        matches.set(library.code || library.name, library);
+      }
+
+      const currentMatches = [...matches.values()];
+      if (hasExactLibraryMatch(query, currentMatches)) {
+        this.librarySearchCache.set(query, currentMatches);
+        return currentMatches;
+      }
+    }
+
+    const result = [...matches.values()];
+    this.librarySearchCache.set(query, result);
+    return result;
   }
 
   async getUsageTrend(libraryCode: string, type: "D" | "H"): Promise<TrendPoint[]> {
@@ -196,6 +226,16 @@ export class Data4LibraryClient {
       .filter((book) => book.title || book.isbn13);
   }
 
+  private async getLibraryPage(pageNo: number, libraryName?: string, pageSize = 10): Promise<LibrarySummary[]> {
+    const xml = await this.requestXml("libSrch", {
+      libName: libraryName,
+      pageNo: String(pageNo),
+      pageSize: String(pageSize)
+    });
+    const response = this.responseOf(xml);
+    return extractLibraries(response);
+  }
+
   private async requestXml(endpoint: string, params: Record<string, string | undefined>): Promise<unknown> {
     if (!this.config.authKey) throw new MissingAuthKeyError();
 
@@ -262,6 +302,39 @@ function normalizeLibrary(value: unknown): LibrarySummary {
     tel: cleanText(item.tel ?? item.phone ?? item.libTel),
     homepage: cleanText(item.homepage ?? item.homepageUrl ?? item.url)
   };
+}
+
+function extractLibraries(response: unknown): LibrarySummary[] {
+  const root = asObject(response) ?? {};
+  const libs = asObject(root.libs);
+  const rawLibraries = ensureArray(libs?.lib ?? root.lib);
+  return rawLibraries
+    .map(normalizeLibrary)
+    .filter((library) => library.code || library.name);
+}
+
+function filterLibrariesByName(query: string, libraries: LibrarySummary[]): LibrarySummary[] {
+  const normalizedQuery = normalizeLookupText(query);
+  if (!normalizedQuery) return [];
+  return libraries.filter((library) => {
+    const normalizedName = normalizeLookupText(library.name);
+    return normalizedName === normalizedQuery ||
+      normalizedName.includes(normalizedQuery) ||
+      normalizedQuery.includes(normalizedName);
+  });
+}
+
+function hasExactLibraryMatch(query: string, libraries: LibrarySummary[]): boolean {
+  const normalizedQuery = normalizeLookupText(query);
+  return libraries.some((library) => normalizeLookupText(library.name) === normalizedQuery);
+}
+
+function normalizeLookupText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[()（）\[\]{}·.,_-]/g, "");
 }
 
 function normalizeLoanHistory(value: unknown): LoanHistoryItem {
