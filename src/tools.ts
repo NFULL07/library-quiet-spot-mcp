@@ -208,10 +208,29 @@ async function findTrendingBooksAndLibraryMatch(
   if (resolved.kind === "message") return resolved.markdown;
 
   const library = resolved.library;
-  const [popularBooks, visitMarkdown] = await Promise.all([
-    client.getPopularBooks(region, ageGroup),
-    findBestVisitTime(client, undefined, library.code)
+  const effectiveRegion = region ?? inferRegionCodeFromAddress(library.address);
+  const [popularResult, visitMarkdown] = await Promise.all([
+    client.getPopularBooks(effectiveRegion, ageGroup)
+      .then((books) => ({ ok: true as const, books }))
+      .catch((error: unknown) => ({ ok: false as const, error })),
+    findBestVisitTime(client, undefined, library.code).catch(() => "")
   ]);
+
+  if (!popularResult.ok) {
+    return [
+      "## 인기 도서 소장 매칭",
+      "",
+      `대상 도서관: ${formatLibrary(library)}`,
+      effectiveRegion ? `- 추론한 지역 코드: \`${effectiveRegion}\`` : "- 지역 코드: 확인되지 않음",
+      "",
+      "인기 도서 데이터를 불러오지 못했습니다.",
+      "",
+      `- 원인: ${popularResult.error instanceof Error ? popularResult.error.message : String(popularResult.error)}`,
+      "- 정보나루 인기대출 API 응답을 기반으로만 답해야 하므로 대체 목록을 만들지 않습니다."
+    ].join("\n");
+  }
+
+  const popularBooks = popularResult.books;
 
   if (popularBooks.length === 0) {
     return [
@@ -219,7 +238,7 @@ async function findTrendingBooksAndLibraryMatch(
       "",
       "조건에 맞는 인기 도서 데이터를 찾지 못했습니다.",
       "",
-      region ? `- 지역 코드: \`${region}\`` : "- 지역 코드: 전체",
+      effectiveRegion ? `- 지역 코드: \`${effectiveRegion}\`` : "- 지역 코드: 전체",
       ageGroup ? `- 연령 코드: \`${ageGroup}\`` : "- 연령 코드: 전체",
       `- 도서관: ${formatLibrary(library)}`
     ].join("\n");
@@ -228,7 +247,9 @@ async function findTrendingBooksAndLibraryMatch(
   const checks = await Promise.all(
     popularBooks.slice(0, 5).map(async (book) => ({
       book,
-      exist: book.isbn13 ? await client.getBookExist(library.code, book.isbn13) : undefined
+      exist: book.isbn13
+        ? await client.getBookExist(library.code, book.isbn13).catch(() => undefined)
+        : undefined
     }))
   );
 
@@ -247,6 +268,7 @@ async function findTrendingBooksAndLibraryMatch(
     "## 인기 도서 소장 매칭",
     "",
     `대상 도서관: ${formatLibrary(library)}`,
+    effectiveRegion ? `지역 코드: \`${effectiveRegion}\`` : "지역 코드: 전체",
     "",
     markdownTable(["인기 순위", "도서", "저자", "ISBN", "소장 여부", "대출 가능 여부"], rows),
     "",
@@ -638,6 +660,37 @@ function formatLibrary(library: LibrarySummary): string {
   const code = library.code ? ` (${library.code})` : "";
   const address = library.address ? ` - ${library.address}` : "";
   return `${name}${code}${address}`;
+}
+
+function inferRegionCodeFromAddress(address: string): string | undefined {
+  const normalized = normalizeLookupText(address);
+  const entries: Array<[string, string]> = [
+    ["서울", "11"],
+    ["부산", "21"],
+    ["대구", "22"],
+    ["인천", "23"],
+    ["광주", "24"],
+    ["대전", "25"],
+    ["울산", "26"],
+    ["세종", "29"],
+    ["경기", "31"],
+    ["강원", "32"],
+    ["충북", "33"],
+    ["충청북도", "33"],
+    ["충남", "34"],
+    ["충청남도", "34"],
+    ["전북", "35"],
+    ["전라북도", "35"],
+    ["전남", "36"],
+    ["전라남도", "36"],
+    ["경북", "37"],
+    ["경상북도", "37"],
+    ["경남", "38"],
+    ["경상남도", "38"],
+    ["제주", "39"]
+  ];
+
+  return entries.find(([label]) => normalized.includes(normalizeLookupText(label)))?.[1];
 }
 
 function optionalString(args: Record<string, unknown>, key: string): string | undefined {

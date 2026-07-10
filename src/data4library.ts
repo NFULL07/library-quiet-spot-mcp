@@ -188,11 +188,28 @@ export class Data4LibraryClient {
 
   async getPopularBooks(region?: string, ageGroup?: string): Promise<PopularBook[]> {
     const today = new Date();
-    const endDt = formatDate(today);
-    const start = new Date(today);
-    start.setDate(start.getDate() - 30);
-    const startDt = formatDate(start);
+    const periods = buildPopularBookPeriods(today);
 
+    let lastError: unknown;
+    for (const period of periods) {
+      try {
+        const books = await this.getPopularBooksForPeriod(period.startDt, period.endDt, region, ageGroup);
+        if (books.length > 0) return books;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError instanceof Error) throw lastError;
+    return [];
+  }
+
+  private async getPopularBooksForPeriod(
+    startDt: string,
+    endDt: string,
+    region?: string,
+    ageGroup?: string
+  ): Promise<PopularBook[]> {
     const xml = await this.requestXml("loanItemSrch", {
       startDt,
       endDt,
@@ -464,4 +481,30 @@ function formatDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function buildPopularBookPeriods(today: Date): Array<{ startDt: string; endDt: string }> {
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  const recentStart = new Date(yesterday);
+  recentStart.setDate(recentStart.getDate() - 30);
+
+  const previousYear = today.getFullYear() - 1;
+  const twoYearsAgo = today.getFullYear() - 2;
+
+  return [
+    {
+      startDt: formatDate(recentStart),
+      endDt: formatDate(yesterday)
+    },
+    {
+      startDt: `${previousYear}-01-01`,
+      endDt: `${previousYear}-12-31`
+    },
+    {
+      startDt: `${twoYearsAgo}-01-01`,
+      endDt: `${twoYearsAgo}-12-31`
+    }
+  ];
 }
