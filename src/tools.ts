@@ -18,7 +18,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "recommend_books_for_child",
     description:
-      "Recommends child-appropriate books from Data4Library age-group loan data, optionally augments candidates with Aladin bookstore metadata, and checks holdings at a named or nearby library.",
+      "Library Visit Reading Guide(도서관 방문 독서 길잡이) recommends child-appropriate books from Data4Library age-group loan data, optionally augments candidates with Aladin metadata, and checks library holdings.",
     inputSchema: {
       type: "object",
       properties: {
@@ -76,7 +76,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "find_nearby_libraries",
     description:
-      "Finds nearby libraries from a place name or latitude/longitude. Uses Kakao Local to resolve place names, then Data4Library(도서관 정보나루) to show distance, operating information, and visit-window candidates.",
+      "Library Visit Reading Guide(도서관 방문 독서 길잡이) finds nearby libraries from a place name or latitude/longitude using Kakao Local and Data4Library(도서관 정보나루).",
     inputSchema: {
       type: "object",
       properties: {
@@ -114,7 +114,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "plan_library_reading_visit",
     description:
-      "Creates a library reading-visit plan by combining a target book's availability, Data4Library next-reading recommendations, same-library availability checks, and visit-window guidance.",
+      "Library Visit Reading Guide(도서관 방문 독서 길잡이) creates a reading-visit plan with target book availability, next-reading recommendations, same-library holdings, and visit windows.",
     inputSchema: {
       type: "object",
       properties: {
@@ -148,7 +148,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "find_best_visit_time",
     description:
-      "Plans practical library visit windows from Data4Library(도서관 정보나루). Uses usageTrend when available; otherwise derives visit candidates from official operating hours and closed-day data.",
+      "Library Visit Reading Guide(도서관 방문 독서 길잡이) plans practical library visit windows from Data4Library(도서관 정보나루) usageTrend or official operating hours.",
     inputSchema: {
       type: "object",
       properties: {
@@ -174,7 +174,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "find_trending_books_and_library_match",
     description:
-      "Finds current popular books from Data4Library(도서관 정보나루), checks whether a named library owns them, and adds practical visit-window guidance.",
+      "Library Visit Reading Guide(도서관 방문 독서 길잡이) finds popular books from Data4Library(도서관 정보나루), checks named-library holdings, and adds visit-window guidance.",
     inputSchema: {
       type: "object",
       properties: {
@@ -208,7 +208,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "generate_data_driven_reading_roadmap",
     description:
-      "Builds a measured next-reading roadmap from a book title or ISBN using Data4Library(도서관 정보나루) usageAnalysisList co-loan, mania, and reader recommendation data.",
+      "Library Visit Reading Guide(도서관 방문 독서 길잡이) builds a next-reading roadmap from a title or ISBN using Data4Library(도서관 정보나루) co-loan, mania, and reader recommendation data.",
     inputSchema: {
       type: "object",
       properties: {
