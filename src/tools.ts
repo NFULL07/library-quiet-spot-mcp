@@ -1,4 +1,4 @@
-import { Data4LibraryClient, MissingAuthKeyError, BookSummary, TrendPoint, LibrarySummary } from "./data4library.js";
+import { Data4LibraryClient, MissingAuthKeyError, BookSummary, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult } from "./data4library.js";
 import { guardMarkdown, markdownTable } from "./text.js";
 
 export type ToolDefinition = {
@@ -15,6 +15,40 @@ export type ToolDefinition = {
 };
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    name: "plan_library_reading_visit",
+    description:
+      "Creates a library reading-visit plan by combining a target book's availability, Data4Library next-reading recommendations, same-library availability checks, and visit-window guidance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        library_name: {
+          type: "string",
+          description: "Library name to visit, such as 정독도서관 or 마포중앙도서관."
+        },
+        library_code: {
+          type: "string",
+          description: "Optional Data4Library library code. Use this only when the code is already known."
+        },
+        book_title: {
+          type: "string",
+          description: "Book title that the user wants to read or borrow, such as 아몬드."
+        },
+        isbn: {
+          type: "string",
+          description: "Optional ISBN-13 of the target book when already known."
+        }
+      },
+      additionalProperties: false
+    },
+    annotations: {
+      title: "Plan a library reading visit",
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+      idempotentHint: true
+    }
+  },
   {
     name: "find_best_visit_time",
     description:
@@ -110,6 +144,16 @@ export async function callTool(
 ): Promise<string> {
   try {
     switch (name) {
+      case "plan_library_reading_visit":
+        return guardMarkdown(
+          await planLibraryReadingVisit(
+            client,
+            optionalString(args, "library_name"),
+            optionalString(args, "library_code"),
+            optionalString(args, "book_title"),
+            optionalString(args, "isbn")
+          )
+        );
       case "find_best_visit_time":
         return guardMarkdown(
           await findBestVisitTime(
@@ -153,6 +197,77 @@ async function findBestVisitTime(
   if (resolved.kind === "message") return resolved.markdown;
 
   return renderBestVisitTime(client, resolved.library);
+}
+
+async function planLibraryReadingVisit(
+  client: Data4LibraryClient,
+  libraryName: string | undefined,
+  libraryCode: string | undefined,
+  bookTitle: string | undefined,
+  isbn: string | undefined
+): Promise<string> {
+  const [libraryResolved, bookResolved] = await Promise.all([
+    resolveSingleLibrary(client, libraryName, libraryCode),
+    resolveSingleBook(client, bookTitle, isbn)
+  ]);
+  if (libraryResolved.kind === "message") return libraryResolved.markdown;
+  if (bookResolved.kind === "message") return bookResolved.markdown;
+
+  const library = libraryResolved.library;
+  const baseBook = bookResolved.book;
+  const [targetExist, analysis, visitMarkdown] = await Promise.all([
+    client.getBookExist(library.code, baseBook.isbn13).catch(() => undefined),
+    client.getUsageAnalysis(baseBook.isbn13).catch(() => undefined),
+    renderBestVisitTime(client, library).catch(() => "")
+  ]);
+
+  const companionBooks = collectCompanionBooks(analysis).slice(0, 5);
+  const companionChecks = await Promise.all(
+    companionBooks.map(async (item) => ({
+      ...item,
+      exist: item.book.isbn13
+        ? await client.getBookExist(library.code, item.book.isbn13).catch(() => undefined)
+        : undefined
+    }))
+  );
+
+  const targetRows = [[
+    formatBookTitle(baseBook),
+    formatExistStatus(targetExist?.hasBook),
+    formatLoanStatus(targetExist?.loanAvailable),
+    targetExist?.rawStatus || "정보나루 bookExist 응답을 확인하지 못했습니다."
+  ]];
+
+  const companionRows = companionChecks.map((item) => [
+    item.source,
+    formatBookTitle(item.book),
+    item.book.authors || "-",
+    formatExistStatus(item.exist?.hasBook),
+    formatLoanStatus(item.exist?.loanAvailable)
+  ]);
+
+  return [
+    "## 도서관 독서 방문 플랜",
+    "",
+    `대상 도서관: ${formatLibrary(library)}`,
+    `기준 도서: ${formatBookTitle(baseBook)}`,
+    "",
+    "## 1. 이 책을 빌리러 가도 될까?",
+    "",
+    markdownTable(["도서", "소장 여부", "대출 가능 여부", "응답 근거"], targetRows),
+    "",
+    "## 2. 같이 빌릴 다음 책 후보",
+    "",
+    companionRows.length > 0
+      ? markdownTable(["추천 근거", "도서", "저자", "소장 여부", "대출 가능 여부"], companionRows)
+      : "- 정보나루 이용분석 응답에 함께 추천할 책이 없습니다.",
+    "",
+    "## 3. 방문 시간",
+    "",
+    summarizeVisitMarkdown(visitMarkdown),
+    "",
+    "이 도구는 단순 소장 검색이 아니라, 기준 책의 대출 가능 여부와 다음 독서 후보의 같은 도서관 소장 여부를 한 번에 묶어 방문 계획으로 정리합니다."
+  ].join("\n");
 }
 
 async function renderBestVisitTime(
@@ -638,6 +753,49 @@ function summarizePoints(points: TrendPoint[], title: string): string {
   const ranked = rankQuietPoints(points).slice(0, 5);
   const values = ranked.map((point) => `${point.label}(${point.percentile.toFixed(1)}%)`).join(", ");
   return `- ${title} 한산 후보: ${values}`;
+}
+
+function collectCompanionBooks(analysis: UsageAnalysis | undefined): Array<{ source: string; book: BookSummary }> {
+  if (!analysis) return [];
+
+  const groups: Array<{ source: string; books: BookSummary[] }> = [
+    {
+      source: "함께 대출",
+      books: analysis.coLoanBooks
+    },
+    {
+      source: "마니아 추천",
+      books: analysis.maniaRecBooks
+    },
+    {
+      source: "다독자 추천",
+      books: analysis.readerRecBooks
+    }
+  ];
+
+  const seen = new Set<string>();
+  const result: Array<{ source: string; book: BookSummary }> = [];
+  for (const group of groups) {
+    for (const book of group.books) {
+      const key = book.isbn13 || `${normalizeLookupText(book.title)}:${normalizeAuthorKey(book.authors)}`;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      result.push({ source: group.source, book });
+    }
+  }
+  return result;
+}
+
+function formatExistStatus(value: BookExistResult["hasBook"]): string {
+  if (value === true) return "소장";
+  if (value === false) return "미소장";
+  return "확인 필요";
+}
+
+function formatLoanStatus(value: BookExistResult["loanAvailable"]): string {
+  if (value === true) return "가능";
+  if (value === false) return "불가";
+  return "도서관 확인";
 }
 
 function summarizeVisitMarkdown(markdown: string): string {
