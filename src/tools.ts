@@ -28,7 +28,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         grade: {
           type: "string",
-          description: "Child grade or school stage, such as 초등학교 3학년, 7살, 중학생."
+          description: "Child grade, school stage, or age phrase, such as 초등학교 3학년, 7살, 중학생."
         },
         interests: {
           type: "string",
@@ -44,7 +44,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         place_name: {
           type: "string",
-          description: "Optional place name to find nearby libraries, such as 부산 서면역 or 대구 동성로. Requires KAKAO_REST_API_KEY."
+          description: "Optional explicit place name to find nearby libraries, such as 부산 서면역 or 대구 동성로. Requires KAKAO_REST_API_KEY. Do not invent a place when the user did not provide one."
         },
         latitude: {
           type: "number",
@@ -724,6 +724,7 @@ type ChildRecommendationCandidate = {
 
 function resolveChildReadingProfile(age: number | undefined, grade: string | undefined): ChildReadingProfile | undefined {
   const gradeText = grade ? normalizeLookupText(grade) : "";
+  const parsedAge = age ?? parseAgeFromText(gradeText);
   if (gradeText) {
     if (/유아|유치|미취학|영유아/.test(gradeText)) {
       return { label: grade ?? "미취학 아동", ageGroupCode: "6" };
@@ -736,13 +737,21 @@ function resolveChildReadingProfile(age: number | undefined, grade: string | und
     }
   }
 
-  if (age === undefined) return undefined;
-  const roundedAge = Math.round(age);
+  if (parsedAge === undefined) return undefined;
+  const roundedAge = Math.round(parsedAge);
   if (roundedAge <= 7) return { label: `${roundedAge}살`, ageGroupCode: "6" };
   if (roundedAge <= 13) return { label: `${roundedAge}살`, ageGroupCode: "8" };
   if (roundedAge <= 19) return { label: `${roundedAge}살`, ageGroupCode: "14" };
   if (roundedAge < 30) return { label: `${roundedAge}살`, ageGroupCode: "20" };
   return { label: `${roundedAge}살`, ageGroupCode: String(Math.floor(roundedAge / 10) * 10) };
+}
+
+function parseAgeFromText(text: string): number | undefined {
+  if (!text) return undefined;
+  const match = text.match(/(\d{1,2})(?:살|세|개월)?/);
+  if (!match) return undefined;
+  const value = Number.parseInt(match[1] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 async function resolveLibraryTargets(
@@ -789,7 +798,7 @@ async function resolveLibraryTargets(
     return {
       kind: "libraries",
       libraries: [],
-      summary: "도서관: 지정 없음"
+      summary: "도서관: 지정 없음\n도서관 소장·방문 정보까지 보려면 `place_name` 또는 `library_name`을 함께 입력해 주세요."
     };
   }
 
