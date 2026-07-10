@@ -295,6 +295,11 @@ async function resolveSingleLibrary(
   }
 
   const libraries = await client.searchLibraries(libraryName);
+  const selected = selectBestLibraryMatch(libraryName, libraries);
+  if (selected) {
+    return { kind: "library", library: selected };
+  }
+
   if (libraries.length === 0) {
     return {
       kind: "message",
@@ -328,6 +333,41 @@ async function resolveSingleLibrary(
   }
 
   return { kind: "library", library: libraries[0] };
+}
+
+function selectBestLibraryMatch(query: string, libraries: LibrarySummary[]): LibrarySummary | undefined {
+  const normalizedQuery = normalizeLookupText(query);
+  const exactMatches = libraries.filter((library) => normalizeLookupText(library.name) === normalizedQuery);
+  if (exactMatches.length === 1) return exactMatches[0];
+
+  const scored = libraries
+    .map((library) => ({
+      library,
+      score: scoreLibraryMatch(normalizedQuery, normalizeLookupText(library.name))
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.library.name.length - b.library.name.length);
+
+  if (scored.length === 0) return undefined;
+  const [best, second] = scored;
+  if (!second || best.score > second.score) return best.library;
+  return undefined;
+}
+
+function scoreLibraryMatch(normalizedQuery: string, normalizedName: string): number {
+  if (!normalizedQuery || !normalizedName) return 0;
+  if (normalizedName === normalizedQuery) return 1000;
+  if (normalizedName.includes(normalizedQuery)) return 800 - Math.max(0, normalizedName.length - normalizedQuery.length);
+  if (normalizedQuery.includes(normalizedName)) return 700 - Math.max(0, normalizedQuery.length - normalizedName.length);
+  return 0;
+}
+
+function normalizeLookupText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[()（）\[\]{}·.,_-]/g, "");
 }
 
 type BookResolution =
