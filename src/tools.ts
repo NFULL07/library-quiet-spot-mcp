@@ -28,7 +28,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         grade: {
           type: "string",
-          description: "Child grade, school stage, or age phrase, such as 초등학교 3학년, 7살, 중학생."
+          description: "Child grade, school stage, or age phrase, such as 초3, 초등학교 3학년, 초등 저학년, 7살, 만 5세, 중1, 고2."
         },
         interests: {
           type: "string",
@@ -724,19 +724,10 @@ type ChildRecommendationCandidate = {
 
 function resolveChildReadingProfile(age: number | undefined, grade: string | undefined): ChildReadingProfile | undefined {
   const gradeText = grade ? normalizeLookupText(grade) : "";
-  const parsedAge = age ?? parseAgeFromText(gradeText);
-  if (gradeText) {
-    if (/유아|유치|미취학|영유아/.test(gradeText)) {
-      return { label: grade ?? "미취학 아동", ageGroupCode: "6" };
-    }
-    if (/초등|초등학생|초/.test(gradeText)) {
-      return { label: grade ?? "초등학생", ageGroupCode: "8" };
-    }
-    if (/중등|중학생|중학교|고등|고등학생|고등학교|청소년/.test(gradeText)) {
-      return { label: grade ?? "청소년", ageGroupCode: "14" };
-    }
-  }
+  const schoolProfile = parseSchoolProfile(gradeText, grade);
+  if (schoolProfile) return schoolProfile;
 
+  const parsedAge = age ?? parseAgeFromText(gradeText);
   if (parsedAge === undefined) return undefined;
   const roundedAge = Math.round(parsedAge);
   if (roundedAge <= 7) return { label: `${roundedAge}살`, ageGroupCode: "6" };
@@ -746,9 +737,44 @@ function resolveChildReadingProfile(age: number | undefined, grade: string | und
   return { label: `${roundedAge}살`, ageGroupCode: String(Math.floor(roundedAge / 10) * 10) };
 }
 
+function parseSchoolProfile(text: string, original: string | undefined): ChildReadingProfile | undefined {
+  if (!text) return undefined;
+  const label = original?.trim() || "";
+
+  if (/예비초등|예비초|취학전|미취학|유아|유치|유치원|어린이집|영유아/.test(text)) {
+    return { label: label || "미취학 아동", ageGroupCode: "6" };
+  }
+
+  if (/초등저학년|초저|초등낮은학년|초등1학년|초등학교1학년|초1|초등2학년|초등학교2학년|초2|초등3학년|초등학교3학년|초3/.test(text)) {
+    return { label: label || "초등 저학년", ageGroupCode: "8" };
+  }
+
+  if (/초등고학년|초고|초등높은학년|초등4학년|초등학교4학년|초4|초등5학년|초등학교5학년|초5|초등6학년|초등학교6학년|초6/.test(text)) {
+    return { label: label || "초등 고학년", ageGroupCode: "8" };
+  }
+
+  if (/초등|초등학생|초등학교|초등생/.test(text)) {
+    return { label: label || "초등학생", ageGroupCode: "8" };
+  }
+
+  if (/중등|중학생|중학교|중등1학년|중학교1학년|중1|중등2학년|중학교2학년|중2|중등3학년|중학교3학년|중3/.test(text)) {
+    return { label: label || "중학생", ageGroupCode: "14" };
+  }
+
+  if (/고등|고등학생|고등학교|고등1학년|고등학교1학년|고1|고등2학년|고등학교2학년|고2|고등3학년|고등학교3학년|고3|청소년/.test(text)) {
+    return { label: label || "청소년", ageGroupCode: "14" };
+  }
+
+  if (/대학생|성인|20대|스무살/.test(text)) {
+    return { label: label || "20대", ageGroupCode: "20" };
+  }
+
+  return undefined;
+}
+
 function parseAgeFromText(text: string): number | undefined {
   if (!text) return undefined;
-  const match = text.match(/(\d{1,2})(?:살|세|개월)?/);
+  const match = text.match(/(?:만)?(\d{1,2})(?:살|세|개월|세반|살반)/);
   if (!match) return undefined;
   const value = Number.parseInt(match[1] ?? "", 10);
   return Number.isFinite(value) && value > 0 ? value : undefined;
