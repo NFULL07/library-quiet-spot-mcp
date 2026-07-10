@@ -152,7 +152,13 @@ async function findBestVisitTime(
   const resolved = await resolveSingleLibrary(client, libraryName, libraryCode);
   if (resolved.kind === "message") return resolved.markdown;
 
-  const library = resolved.library;
+  return renderBestVisitTime(client, resolved.library);
+}
+
+async function renderBestVisitTime(
+  client: Data4LibraryClient,
+  library: LibrarySummary
+): Promise<string> {
   const [dayPoints, hourPoints] = await Promise.all([
     client.getUsageTrend(library.code, "D"),
     client.getUsageTrend(library.code, "H")
@@ -160,15 +166,7 @@ async function findBestVisitTime(
 
   const allPoints = [...dayPoints, ...hourPoints];
   if (allPoints.length === 0) {
-    return [
-      "## 한산한 방문 시간",
-      "",
-      "이 도서관은 혼잡도 데이터가 제공되지 않습니다.",
-      "",
-      `- 도서관: ${formatLibrary(library)}`,
-      "- 정보나루 참여 도서관 또는 usageTrend 제공 범위에 포함되지 않았을 수 있습니다.",
-      "- 데이터가 없는 경우 임의로 혼잡도를 추측하지 않습니다."
-    ].join("\n");
+    return renderVisitTimeFallback(library);
   }
 
   const ranked = rankQuietPoints(allPoints).slice(0, 3);
@@ -213,7 +211,7 @@ async function findTrendingBooksAndLibraryMatch(
     client.getPopularBooks(effectiveRegion, ageGroup)
       .then((books) => ({ ok: true as const, books }))
       .catch((error: unknown) => ({ ok: false as const, error })),
-    findBestVisitTime(client, undefined, library.code).catch(() => "")
+    renderBestVisitTime(client, library).catch(() => "")
   ]);
 
   if (!popularResult.ok) {
@@ -262,13 +260,13 @@ async function findTrendingBooksAndLibraryMatch(
     exist?.loanAvailable === true ? "가능" : exist?.loanAvailable === false ? "불가" : "도서관 확인"
   ]);
 
-  const visitSummary = visitMarkdown.split("\n").slice(0, 8).join("\n");
+  const visitSummary = summarizeVisitMarkdown(visitMarkdown);
 
   return [
     "## 인기 도서 소장 매칭",
     "",
     `대상 도서관: ${formatLibrary(library)}`,
-    effectiveRegion ? `지역 코드: \`${effectiveRegion}\`` : "지역 코드: 전체",
+    effectiveRegion ? `지역 코드: \`${effectiveRegion}\` (지역 결과가 없으면 전국 인기대출로 보완)` : "지역 코드: 전체",
     "",
     markdownTable(["인기 순위", "도서", "저자", "ISBN", "소장 여부", "대출 가능 여부"], rows),
     "",
@@ -297,7 +295,9 @@ async function resolveSingleLibrary(
         name: libraryName ?? "",
         address: "",
         tel: "",
-        homepage: ""
+        homepage: "",
+        operatingTime: "",
+        closedDays: ""
       }
     };
   }
@@ -638,6 +638,50 @@ function summarizePoints(points: TrendPoint[], title: string): string {
   const ranked = rankQuietPoints(points).slice(0, 5);
   const values = ranked.map((point) => `${point.label}(${point.percentile.toFixed(1)}%)`).join(", ");
   return `- ${title} 한산 후보: ${values}`;
+}
+
+function summarizeVisitMarkdown(markdown: string): string {
+  if (!markdown.trim()) {
+    return "- 방문 시간 정보는 확인하지 못했습니다.";
+  }
+
+  if (markdown.includes("## 방문 시간 데이터")) {
+    return "- 이 도서관의 `usageTrend` 시간대/요일 지표는 제공되지 않아 한산한 시간 순위는 계산하지 않았습니다.";
+  }
+
+  const lines = markdown.split("\n");
+  const tableStart = lines.findIndex((line) => line.startsWith("| 순위 |"));
+  if (tableStart === -1) {
+    return lines.slice(0, 8).join("\n");
+  }
+
+  return [
+    ...lines.slice(0, tableStart + 2),
+    ...lines.slice(tableStart + 2, tableStart + 5)
+  ].join("\n");
+}
+
+function renderVisitTimeFallback(library: LibrarySummary): string {
+  const infoRows = [
+    ["도서관", formatLibrary(library)],
+    ["운영시간", library.operatingTime || "정보나루 기본정보 응답에 없음"],
+    ["휴관일", library.closedDays || "정보나루 기본정보 응답에 없음"],
+    ["전화", library.tel || "정보나루 기본정보 응답에 없음"],
+    ["홈페이지", library.homepage || "정보나루 기본정보 응답에 없음"]
+  ];
+
+  return [
+    "## 방문 시간 데이터",
+    "",
+    "정보나루 `usageTrend` 응답에 이 도서관의 시간대별/요일별 지표가 없어 한산한 시간 순위를 계산할 수 없습니다.",
+    "대신 도서관 이름 검색으로 확인한 실제 기본정보를 함께 제공합니다.",
+    "",
+    markdownTable(["항목", "값"], infoRows),
+    "",
+    "- 혼잡도 수치가 없는 도서관은 임의로 한산한 시간을 추측하지 않습니다.",
+    "- 같은 질문에 도서관 코드가 아닌 정확한 도서관 이름을 넣으면, 가능한 경우 기본정보까지 포함해 다시 확인합니다.",
+    "- 인기 도서 소장 여부와 다음 독서 후보 기능은 `loanItemSrch`, `bookExist`, `usageAnalysisList` 데이터를 별도로 조회합니다."
+  ].join("\n");
 }
 
 function renderBookSection(title: string, subtitle: string, books: BookSummary[]): string {

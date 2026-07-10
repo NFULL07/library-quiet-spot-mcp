@@ -27,7 +27,7 @@ export function numberFrom(value: unknown): number | undefined {
 
 export function markdownTable(headers: string[], rows: string[][]): string {
   if (rows.length === 0) return "";
-  const header = `| ${headers.join(" |")} |`;
+  const header = `| ${headers.join(" | ")} |`;
   const divider = `| ${headers.map(() => "---").join(" | ")} |`;
   const body = rows.map((row) => `| ${row.map(escapeCell).join(" | ")} |`);
   return [header, divider, ...body].join("\n");

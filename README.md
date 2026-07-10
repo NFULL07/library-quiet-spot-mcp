@@ -111,7 +111,7 @@ Default endpoints:
 | `DATA4LIBRARY_AUTH_KEY` | yes | | Data4Library Open API key |
 | `PORT` | no | `3000` | HTTP server port |
 | `CACHE_TTL_SECONDS` | no | `21600` | Per-request API cache TTL |
-| `REQUEST_TIMEOUT_MS` | no | `2500` | Upstream API timeout |
+| `REQUEST_TIMEOUT_MS` | no | `5000` | Upstream API timeout |
 
 The server can start and expose tool metadata without an API key. Tool calls that need live data return a clear setup message until `DATA4LIBRARY_AUTH_KEY` is configured.
 

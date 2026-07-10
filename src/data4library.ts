@@ -54,6 +54,8 @@ export type LibrarySummary = {
   address: string;
   tel: string;
   homepage: string;
+  operatingTime: string;
+  closedDays: string;
 };
 
 export type TrendPoint = {
@@ -198,6 +200,15 @@ export class Data4LibraryClient {
       } catch (error) {
         lastError = error;
       }
+
+      if (!region) continue;
+
+      try {
+        const nationalBooks = await this.getPopularBooksForPeriod(period.startDt, period.endDt, undefined, ageGroup);
+        if (nationalBooks.length > 0) return nationalBooks;
+      } catch (error) {
+        lastError = error;
+      }
     }
 
     if (lastError instanceof Error) throw lastError;
@@ -273,7 +284,12 @@ export class Data4LibraryClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, { signal: controller.signal }).catch((error: unknown) => {
+        if (isAbortError(error)) {
+          throw new Error(`Data4Library request timed out after ${this.config.requestTimeoutMs}ms`);
+        }
+        throw error;
+      });
       if (!response.ok) {
         throw new Error(`Data4Library returned HTTP ${response.status}`);
       }
@@ -317,7 +333,26 @@ function normalizeLibrary(value: unknown): LibrarySummary {
     name: cleanText(item.libName ?? item.libraryName ?? item.name),
     address: cleanText(item.address ?? item.addr ?? item.libAddress),
     tel: cleanText(item.tel ?? item.phone ?? item.libTel),
-    homepage: cleanText(item.homepage ?? item.homepageUrl ?? item.url)
+    homepage: cleanText(item.homepage ?? item.homepageUrl ?? item.url),
+    operatingTime: firstAvailableText(item, [
+      "operatingTime",
+      "operatingHours",
+      "openTime",
+      "libTime",
+      "libOperatingTime",
+      "serviceTime",
+      "weekdayTime",
+      "weekendTime"
+    ]),
+    closedDays: firstAvailableText(item, [
+      "closed",
+      "closedDays",
+      "closedDay",
+      "closeDay",
+      "holiday",
+      "restDay",
+      "regularClosed"
+    ])
   };
 }
 
@@ -424,6 +459,17 @@ function firstText(value: unknown, keys: string[]): string {
   return "";
 }
 
+function firstAvailableText(item: XmlObject, keys: string[]): string {
+  const direct = firstText(item, keys);
+  if (direct) return direct;
+
+  const joined = keys
+    .flatMap((key) => flattenText(item[key]))
+    .filter(Boolean)
+    .join(" / ");
+  return cleanText(joined);
+}
+
 function findFirstObject(value: unknown, keys: string[]): unknown {
   const root = asObject(value);
   if (!root) return undefined;
@@ -474,6 +520,10 @@ function walk(value: unknown, visit: (key: string, value: unknown) => void, key 
 
 function asObject(value: unknown): XmlObject | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as XmlObject : undefined;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function formatDate(date: Date): string {

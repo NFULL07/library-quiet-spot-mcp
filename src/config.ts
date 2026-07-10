@@ -17,6 +17,6 @@ export function loadConfig(): AppConfig {
     port: readPositiveInt("PORT", 3000),
     authKey: process.env.DATA4LIBRARY_AUTH_KEY?.trim() || undefined,
     cacheTtlMs: readPositiveInt("CACHE_TTL_SECONDS", 60 * 60 * 6) * 1000,
-    requestTimeoutMs: readPositiveInt("REQUEST_TIMEOUT_MS", 2500)
+    requestTimeoutMs: readPositiveInt("REQUEST_TIMEOUT_MS", 5000)
   };
 }
