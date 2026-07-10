@@ -827,8 +827,7 @@ async function findAladinMatch(client: Data4LibraryClient, book: BookSummary): P
   const exactIsbn = aladinBooks.find((item) => item.isbn13 && item.isbn13 === book.isbn13);
   if (exactIsbn) return exactIsbn;
 
-  return aladinBooks.find((item) => normalizeBookBaseTitle(item.title) === normalizedTitle)
-    ?? aladinBooks[0];
+  return aladinBooks.find((item) => normalizeBookBaseTitle(item.title) === normalizedTitle);
 }
 
 async function buildChildRecommendationRows(
