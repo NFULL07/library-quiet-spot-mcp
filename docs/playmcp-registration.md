@@ -50,4 +50,5 @@ Branch: main
 Dockerfile path: Dockerfile
 Container port: 3000
 Secret: DATA4LIBRARY_AUTH_KEY
+Secret: KAKAO_REST_API_KEY
 ```

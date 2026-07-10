@@ -26,7 +26,7 @@
 
 | Tool | What it does |
 |---|---|
-| `find_nearby_libraries` | 위도/경도를 기준으로 주변 도서관을 거리순으로 찾고 운영시간 기반 방문 후보를 함께 보여줍니다. |
+| `find_nearby_libraries` | 장소명 또는 위도/경도를 기준으로 주변 도서관을 거리순으로 찾고 운영시간 기반 방문 후보를 함께 보여줍니다. |
 | `plan_library_reading_visit` | 기준 책의 소장/대출 가능 여부, 같은 도서관에서 같이 빌릴 다음 책 후보, 방문 시간 후보를 하나의 방문 플랜으로 묶습니다. |
 | `find_best_visit_time` | 도서관 이름을 검색해 이용 추이 데이터가 있으면 상대적으로 한산한 시간대를 계산하고, 없으면 운영시간 기반 방문 후보를 제공합니다. |
 | `find_trending_books_and_library_match` | 지역 인기 도서 상위 5권을 지정 도서관의 소장/대출 가능 여부와 함께 보여줍니다. |
@@ -35,7 +35,7 @@
 ## Design Highlights
 
 - **Data-grounded answers**: 추천 도서와 소장 여부는 Data4Library API 응답을 사용하고, 방문 후보는 공식 운영시간을 파싱해 계산합니다.
-- **Location-aware discovery**: 위도/경도 좌표를 기준으로 주변 도서관을 거리순으로 정렬해 방문 후보를 만듭니다.
+- **Location-aware discovery**: 카카오 Local API 장소명 검색 또는 위도/경도 좌표를 기준으로 주변 도서관을 거리순으로 정렬합니다.
 - **Reading-visit planning**: 단일 책 검색에서 끝내지 않고, 목표 도서와 다음 독서 후보의 같은 도서관 소장 여부를 함께 확인합니다.
 - **Name-first UX**: 도서관 이름을 입력받아 내부적으로 `libSrch` 검색 결과의 도서관 코드로 변환합니다.
 - **MCP-ready transport**: Streamable HTTP 기반 MCP 서버로 구현했습니다.
@@ -104,6 +104,7 @@ Data4Library client
 npm.cmd install
 Copy-Item .env.example .env
 # Fill DATA4LIBRARY_AUTH_KEY in .env
+# Fill KAKAO_REST_API_KEY too if you want place-name search.
 npm.cmd run build
 npm.cmd start
 ```
@@ -121,11 +122,12 @@ Default endpoints:
 | Name | Required | Default | Description |
 |---|---:|---:|---|
 | `DATA4LIBRARY_AUTH_KEY` | yes | | Data4Library Open API key |
+| `KAKAO_REST_API_KEY` | no | | Kakao Local REST API key for place-name search |
 | `PORT` | no | `3000` | HTTP server port |
 | `CACHE_TTL_SECONDS` | no | `21600` | Per-request API cache TTL |
 | `REQUEST_TIMEOUT_MS` | no | `5000` | Upstream API timeout |
 
-The server can start and expose tool metadata without an API key. Tool calls that need live data return a clear setup message until `DATA4LIBRARY_AUTH_KEY` is configured.
+The server can start and expose tool metadata without an API key. Tool calls that need live Data4Library data return a clear setup message until `DATA4LIBRARY_AUTH_KEY` is configured. Place-name search, such as `홍대입구역 근처 도서관`, additionally requires `KAKAO_REST_API_KEY`; coordinate-based nearby search still works without it.
 
 ## Validation
 

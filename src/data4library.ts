@@ -64,6 +64,14 @@ export type NearbyLibrary = LibrarySummary & {
   distanceKm: number;
 };
 
+export type PlaceSummary = {
+  name: string;
+  address: string;
+  roadAddress: string;
+  latitude: number;
+  longitude: number;
+};
+
 export type TrendPoint = {
   label: string;
   count: number;
@@ -79,6 +87,12 @@ type XmlObject = Record<string, unknown>;
 export class MissingAuthKeyError extends Error {
   constructor() {
     super("DATA4LIBRARY_AUTH_KEY is not configured.");
+  }
+}
+
+export class MissingKakaoRestApiKeyError extends Error {
+  constructor() {
+    super("KAKAO_REST_API_KEY is not configured.");
   }
 }
 
@@ -103,6 +117,24 @@ export class Data4LibraryClient {
 
   hasAuthKey(): boolean {
     return Boolean(this.config.authKey);
+  }
+
+  hasKakaoRestApiKey(): boolean {
+    return Boolean(this.config.kakaoRestApiKey);
+  }
+
+  async searchPlace(placeName: string): Promise<PlaceSummary[]> {
+    if (!this.config.kakaoRestApiKey) throw new MissingKakaoRestApiKeyError();
+
+    const query = placeName.trim();
+    const json = await this.requestKakaoLocalJson("keyword", {
+      query,
+      size: "5"
+    });
+    const root = asObject(json) ?? {};
+    return ensureArray(asObject(root)?.documents)
+      .map(normalizePlace)
+      .filter((place) => place.name && Number.isFinite(place.latitude) && Number.isFinite(place.longitude));
   }
 
   async searchLibraries(libraryName: string): Promise<LibrarySummary[]> {
@@ -341,6 +373,50 @@ export class Data4LibraryClient {
     }
   }
 
+  private async requestKakaoLocalJson(
+    searchType: "keyword",
+    params: Record<string, string | undefined>
+  ): Promise<unknown> {
+    if (!this.config.kakaoRestApiKey) throw new MissingKakaoRestApiKeyError();
+
+    const url = new URL(`https://dapi.kakao.com/v2/local/search/${searchType}.json`);
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") url.searchParams.set(key, value);
+    }
+
+    const cacheKeyParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") cacheKeyParams.set(key, value);
+    }
+    const cacheKey = `kakao:${searchType}?${cacheKeyParams.toString()}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Authorization: `KakaoAK ${this.config.kakaoRestApiKey}`
+        }
+      }).catch((error: unknown) => {
+        if (isAbortError(error)) {
+          throw new Error(`Kakao Local request timed out after ${this.config.requestTimeoutMs}ms`);
+        }
+        throw error;
+      });
+      if (!response.ok) {
+        throw new Error(`Kakao Local returned HTTP ${response.status}`);
+      }
+      const parsed = await response.json() as unknown;
+      this.cache.set(cacheKey, parsed);
+      return parsed;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private responseOf(xml: unknown): unknown {
     const root = asObject(xml);
     return root?.response ?? xml;
@@ -362,6 +438,19 @@ function normalizeBook(value: unknown): BookSummary {
     volume: cleanText(item.vol ?? item.volume),
     imageUrl: cleanText(item.bookImageURL ?? item.bookImageUrl ?? item.imageUrl),
     loanCount: numberFrom(item.loanCnt ?? item.loanCount)
+  };
+}
+
+function normalizePlace(value: unknown): PlaceSummary {
+  const item = asObject(value) ?? {};
+  const latitude = validCoordinate(numberFrom(item.y), -90, 90);
+  const longitude = validCoordinate(numberFrom(item.x), -180, 180);
+  return {
+    name: cleanText(item.place_name ?? item.name),
+    address: cleanText(item.address_name ?? item.address),
+    roadAddress: cleanText(item.road_address_name ?? item.roadAddress),
+    latitude: latitude ?? Number.NaN,
+    longitude: longitude ?? Number.NaN
   };
 }
 

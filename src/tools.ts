@@ -1,4 +1,4 @@
-import { Data4LibraryClient, MissingAuthKeyError, BookSummary, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult, NearbyLibrary } from "./data4library.js";
+import { Data4LibraryClient, MissingAuthKeyError, MissingKakaoRestApiKeyError, BookSummary, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult, NearbyLibrary, PlaceSummary } from "./data4library.js";
 import { guardMarkdown, markdownTable } from "./text.js";
 
 export type ToolDefinition = {
@@ -18,17 +18,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "find_nearby_libraries",
     description:
-      "Finds nearby libraries from Data4Library(도서관 정보나루) using latitude/longitude, then shows distance, operating information, and practical visit-window candidates.",
+      "Finds nearby libraries from a place name or latitude/longitude. Uses Kakao Local to resolve place names, then Data4Library(도서관 정보나루) to show distance, operating information, and visit-window candidates.",
     inputSchema: {
       type: "object",
       properties: {
+        place_name: {
+          type: "string",
+          description: "Place name to search around, such as 홍대입구역 or 서울시청. Requires KAKAO_REST_API_KEY."
+        },
         latitude: {
           type: "number",
-          description: "Current latitude, for example 37.5665."
+          description: "Current latitude, for example 37.5665. Used when place_name is not provided."
         },
         longitude: {
           type: "number",
-          description: "Current longitude, for example 126.9780."
+          description: "Current longitude, for example 126.9780. Used when place_name is not provided."
         },
         radius_km: {
           type: "number",
@@ -39,7 +43,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description: "Maximum number of libraries to return. Defaults to 10 and is capped at 20."
         }
       },
-      required: ["latitude", "longitude"],
       additionalProperties: false
     },
     annotations: {
@@ -183,6 +186,7 @@ export async function callTool(
         return guardMarkdown(
           await findNearbyLibraries(
             client,
+            optionalString(args, "place_name"),
             optionalNumber(args, "latitude"),
             optionalNumber(args, "longitude"),
             optionalNumber(args, "radius_km"),
@@ -235,41 +239,64 @@ export async function callTool(
 
 async function findNearbyLibraries(
   client: Data4LibraryClient,
+  placeName: string | undefined,
   latitude: number | undefined,
   longitude: number | undefined,
   radiusKm: number | undefined,
   limit: number | undefined
 ): Promise<string> {
-  if (latitude === undefined || longitude === undefined) {
+  let resolvedPlace: PlaceSummary | undefined;
+  let resolvedLatitude = latitude;
+  let resolvedLongitude = longitude;
+
+  if (placeName && (resolvedLatitude === undefined || resolvedLongitude === undefined)) {
+    const places = await client.searchPlace(placeName);
+    resolvedPlace = places[0];
+    if (!resolvedPlace) {
+      return [
+        "## 장소를 찾을 수 없습니다",
+        "",
+        `\`${placeName}\`으로 검색된 장소가 없습니다.`,
+        "",
+        "장소명을 더 구체적으로 입력하거나 위도/경도를 직접 입력해 주세요."
+      ].join("\n");
+    }
+    resolvedLatitude = resolvedPlace.latitude;
+    resolvedLongitude = resolvedPlace.longitude;
+  }
+
+  if (resolvedLatitude === undefined || resolvedLongitude === undefined) {
     return [
       "## 주변 도서관을 찾을 수 없습니다",
       "",
-      "현재 위치의 위도와 경도를 입력해 주세요.",
+      "기준 장소명 또는 현재 위치의 위도/경도를 입력해 주세요.",
       "",
+      "- 예: `홍대입구역 근처 도서관 찾아줘`",
       "- 예: `위도 37.5665, 경도 126.9780 주변 도서관 찾아줘`",
-      "- 자연어 장소명은 별도 지오코딩 API가 필요하므로 이 도구는 좌표를 기준으로 검색합니다."
+      "- 장소명 검색은 `KAKAO_REST_API_KEY`가 설정되어 있어야 합니다."
     ].join("\n");
   }
 
-  if (!isValidLatitude(latitude) || !isValidLongitude(longitude)) {
+  if (!isValidLatitude(resolvedLatitude) || !isValidLongitude(resolvedLongitude)) {
     return [
       "## 위치 좌표가 올바르지 않습니다",
       "",
-      `- latitude: ${latitude}`,
-      `- longitude: ${longitude}`,
+      `- latitude: ${resolvedLatitude}`,
+      `- longitude: ${resolvedLongitude}`,
       "- 위도는 -90~90, 경도는 -180~180 범위여야 합니다."
     ].join("\n");
   }
 
   const safeRadiusKm = clampNumber(radiusKm ?? 5, 1, 30);
   const safeLimit = Math.round(clampNumber(limit ?? 10, 1, 20));
-  const libraries = await client.searchNearbyLibraries(latitude, longitude, safeRadiusKm, safeLimit);
+  const libraries = await client.searchNearbyLibraries(resolvedLatitude, resolvedLongitude, safeRadiusKm, safeLimit);
 
   if (libraries.length === 0) {
     return [
       "## 주변 도서관을 찾지 못했습니다",
       "",
-      `- 기준 좌표: ${latitude}, ${longitude}`,
+      resolvedPlace ? `- 기준 장소: ${formatPlace(resolvedPlace)}` : "",
+      `- 기준 좌표: ${resolvedLatitude}, ${resolvedLongitude}`,
       `- 검색 반경: ${safeRadiusKm}km`,
       "",
       "정보나루 도서관 좌표 데이터가 없거나, 검색 반경 안에 좌표가 등록된 도서관이 없을 수 있습니다.",
@@ -292,7 +319,8 @@ async function findNearbyLibraries(
   return [
     "## 내 위치 주변 도서관",
     "",
-    `기준 좌표: ${latitude}, ${longitude}`,
+    resolvedPlace ? `기준 장소: ${formatPlace(resolvedPlace)}` : "",
+    `기준 좌표: ${resolvedLatitude}, ${resolvedLongitude}`,
     `검색 반경: ${safeRadiusKm}km`,
     "",
     markdownTable(["거리", "도서관", "주소", "방문 후보", "휴관일", "도서관 코드"], rows),
@@ -1090,6 +1118,11 @@ function formatLibrary(library: LibrarySummary): string {
   return `${name}${code}${address}`;
 }
 
+function formatPlace(place: PlaceSummary): string {
+  const address = place.roadAddress || place.address;
+  return address ? `${place.name} - ${address}` : place.name;
+}
+
 function firstVisitCandidate(library: NearbyLibrary): string {
   const [candidate] = buildOperatingHourVisitCandidates(library.operatingTime);
   return candidate ? `${candidate.label} ${candidate.time}` : "운영시간 확인 필요";
@@ -1158,6 +1191,15 @@ function formatToolError(error: unknown): string {
       "",
       "- 환경변수 `DATA4LIBRARY_AUTH_KEY`를 설정한 뒤 다시 시도해 주세요.",
       "- 서버와 도구 목록 조회는 인증키 없이도 동작하도록 구성되어 있습니다."
+    ].join("\n");
+  }
+
+  if (error instanceof MissingKakaoRestApiKeyError) {
+    return [
+      "장소명 검색을 위해 카카오 Local API 키가 필요합니다.",
+      "",
+      "- 환경변수 `KAKAO_REST_API_KEY`를 설정하면 `홍대입구역 근처 도서관 찾아줘`처럼 장소명으로 검색할 수 있습니다.",
+      "- 키가 없어도 `latitude`, `longitude`를 직접 입력하면 주변 도서관 검색은 사용할 수 있습니다."
     ].join("\n");
   }
 
