@@ -68,7 +68,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         limit: {
           type: "number",
-          description: "Maximum number of recommendations. Defaults to 5 and is capped at 8."
+          description: "Maximum number of recommendations. Defaults to 3 and is capped at 5 to reduce upstream API calls."
         }
       },
       additionalProperties: false
@@ -348,7 +348,7 @@ async function recommendBooksForChild(
     ].join("\n");
   }
 
-  const safeLimit = Math.round(clampNumber(limit ?? 5, 3, 8));
+  const safeLimit = Math.round(clampNumber(limit ?? 3, 1, 5));
   const libraryTarget = await resolveLibraryTargets(client, libraryName, libraryCode, placeName, latitude, longitude);
   if (libraryTarget.kind === "message") return libraryTarget.markdown;
 
