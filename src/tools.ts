@@ -371,10 +371,10 @@ async function recommendBooksForChild(
   const augmented = await Promise.all(
     popularBooks.slice(0, 50).map(async (book, index) => {
       const aladin = await findAladinMatch(client, book).catch(() => undefined);
-      const interestScore = scoreInterestMatch(book, aladin, interests);
+      const interestScore = scoreInterestMatch(book, interests);
       const aladinBoost = aladin?.bestRank ? Math.max(0, 80 - Math.min(aladin.bestRank, 80)) : 0;
-      const comicLike = isComicLikeBook(book, aladin);
-      const excluded = matchesRecommendationExclusion(book, aladin, exclusionRules);
+      const comicLike = isComicLikeBook(book);
+      const excluded = matchesRecommendationExclusion(book, exclusionRules);
       const comicPenalty = comicLike ? (preferNonComic ? 600 : 240) : 0;
       return {
         book,
@@ -757,6 +757,65 @@ type ChildPopularBookSource = {
   kdcCodes: string[];
 };
 
+type KdcGroup = {
+  code: string;
+  label: string;
+  keywords: string[];
+};
+
+const KDC_GROUPS: KdcGroup[] = [
+  {
+    code: "0",
+    label: "총류",
+    keywords: ["총류", "백과", "사전", "신문", "저널", "독서", "도서관", "정보", "컴퓨터", "코딩", "프로그래밍", "인공지능", "ai"]
+  },
+  {
+    code: "1",
+    label: "철학",
+    keywords: ["철학", "심리", "생각", "마음", "논리", "윤리", "인성", "감정", "습관"]
+  },
+  {
+    code: "2",
+    label: "종교",
+    keywords: ["종교", "신화", "불교", "기독교", "천주교", "이슬람", "명상"]
+  },
+  {
+    code: "3",
+    label: "사회과학",
+    keywords: ["사회", "경제", "문화", "정치", "법", "교육", "직업", "환경", "인권", "미디어", "경제"]
+  },
+  {
+    code: "4",
+    label: "자연과학",
+    keywords: ["과학", "수학", "물리", "화학", "생물", "지구", "우주", "천문", "자연", "공룡", "동물", "식물", "실험"]
+  },
+  {
+    code: "5",
+    label: "기술과학",
+    keywords: ["기술", "공학", "의학", "건강", "농업", "요리", "발명", "로봇", "기계", "생활과학"]
+  },
+  {
+    code: "6",
+    label: "예술",
+    keywords: ["예술", "미술", "그림", "음악", "디자인", "만들기", "공예", "사진", "스포츠", "체육", "만화", "웹툰"]
+  },
+  {
+    code: "7",
+    label: "언어",
+    keywords: ["언어", "국어", "영어", "한글", "말하기", "글쓰기", "어휘", "문법", "외국어"]
+  },
+  {
+    code: "8",
+    label: "문학",
+    keywords: ["문학", "동화", "소설", "시", "이야기", "명작", "창작", "그림책", "판타지", "모험"]
+  },
+  {
+    code: "9",
+    label: "역사",
+    keywords: ["역사", "한국사", "세계사", "조선", "고려", "인물", "위인", "전기", "지리", "여행", "문화유산"]
+  }
+];
+
 function resolveChildReadingProfile(age: number | undefined, grade: string | undefined): ChildReadingProfile | undefined {
   const gradeText = grade ? normalizeLookupText(grade) : "";
   const schoolProfile = parseSchoolProfile(gradeText, grade);
@@ -924,7 +983,7 @@ async function buildChildRecommendationRows(
 
     const reasons = [
       `${profile.label} 연령대 인기 대출 ${candidate.ranking}위권`,
-      candidate.interestScore > 0 ? `관심사(${interests.join(", ")})와 내용/분야 매칭` : "",
+      candidate.interestScore > 0 ? `관심사(${interests.join(", ")})와 KDC/도서관 분류 매칭` : "",
       candidate.comicLike ? "" : "일반 지식서/비만화 후보"
     ].filter(Boolean).join("<br>");
 
@@ -944,23 +1003,17 @@ function formatLibraryHoldings(holdings: Array<{ library: LibrarySummary; exist?
   )).join("<br>");
 }
 
-function scoreInterestMatch(book: BookSummary, aladin: AladinBook | undefined, interests: string[]): number {
+function scoreInterestMatch(book: BookSummary, interests: string[]): number {
   if (interests.length === 0) return 0;
-  const searchable = normalizeLookupText([
-    book.title,
-    book.authors,
-    book.publisher,
-    aladin?.title,
-    aladin?.authors,
-    aladin?.publisher,
-    aladin?.description,
-    aladin?.categoryName
-  ].filter(Boolean).join(" "));
+  const searchable = libraryRecommendationSearchText(book);
+  const bookKdcTags = kdcTagsForBook(book);
 
   let score = 0;
   for (const interest of interests) {
-    const keywords = interestKeywords(interest);
-    if (keywords.some((keyword) => searchable.includes(normalizeLookupText(keyword)))) {
+    const group = kdcGroupForInterest(interest);
+    const keywords = group?.keywords ?? [interest];
+    const kdcMatched = group ? bookKdcTags.some((tag) => tag.code === group.code) : false;
+    if (kdcMatched || keywords.some((keyword) => searchable.includes(normalizeLookupText(keyword)))) {
       score += 120;
     }
   }
@@ -981,7 +1034,7 @@ async function getChildPopularBooks(
     };
   }
 
-  const subjectBooks: BookSummary[] = [];
+  const subjectBooks: PopularBook[] = [];
   let lastError: unknown;
   for (const kdc of kdcCodes) {
     try {
@@ -1012,39 +1065,58 @@ async function getChildPopularBooks(
 function interestKdcCodes(interests: string[]): string[] {
   const codes = new Set<string>();
   for (const interest of interests) {
-    const normalized = normalizeLookupText(interest);
-    if (/과학|실험|우주|수학|생물|공룡|자연|환경|지구|천문/.test(normalized)) {
-      codes.add("4");
-    }
-    if (/로봇|코딩|컴퓨터|기술|발명|공학|인공지능|ai/.test(normalized)) {
-      codes.add("5");
-    }
-    if (/문학|동화|소설|이야기|명작|창작|그림책/.test(normalized)) {
-      codes.add("8");
-    }
-    if (/역사|한국사|세계사|조선|인물|위인/.test(normalized)) {
-      codes.add("9");
-    }
-    if (/사회|경제|문화|철학|정치|직업/.test(normalized)) {
-      codes.add("3");
-    }
-    if (/예술|음악|미술|그림|디자인|만들기/.test(normalized)) {
-      codes.add("6");
-    }
+    const group = kdcGroupForInterest(interest);
+    if (group) codes.add(group.code);
   }
   return [...codes].slice(0, 2);
 }
 
 function formatKdcCode(code: string): string {
-  const labels: Record<string, string> = {
-    "3": "300 사회과학",
-    "4": "400 자연과학",
-    "5": "500 기술과학",
-    "6": "600 예술",
-    "8": "800 문학",
-    "9": "900 역사"
-  };
-  return labels[code] ?? code;
+  const group = KDC_GROUPS.find((item) => item.code === normalizeKdcCode(code));
+  return group ? `${group.code}00 ${group.label}` : code;
+}
+
+function kdcGroupForInterest(interest: string): KdcGroup | undefined {
+  const normalized = normalizeLookupText(interest);
+  if (!normalized) return undefined;
+  return KDC_GROUPS.find((group) =>
+    normalized.includes(group.label) || group.keywords.some((keyword) => normalized.includes(normalizeLookupText(keyword)))
+  );
+}
+
+function kdcTagsForBook(book: BookSummary): KdcGroup[] {
+  const tags: KdcGroup[] = [];
+  const classCode = normalizeKdcCode(book.classNo);
+  const codeGroup = classCode ? KDC_GROUPS.find((group) => group.code === classCode) : undefined;
+  if (codeGroup) tags.push(codeGroup);
+
+  const className = normalizeLookupText(book.className);
+  for (const group of KDC_GROUPS) {
+    if (tags.includes(group)) continue;
+    if (className.includes(normalizeLookupText(group.label))) {
+      tags.push(group);
+      continue;
+    }
+    if (group.keywords.some((keyword) => className.includes(normalizeLookupText(keyword)))) {
+      tags.push(group);
+    }
+  }
+
+  if (tags.length > 0) return tags;
+
+  const searchable = libraryRecommendationSearchText(book);
+  for (const group of KDC_GROUPS) {
+    if (group.keywords.some((keyword) => searchable.includes(normalizeLookupText(keyword)))) {
+      tags.push(group);
+    }
+  }
+  return tags;
+}
+
+function normalizeKdcCode(value: string | undefined): string {
+  const text = String(value ?? "").trim();
+  const match = text.match(/\d/);
+  return match?.[0] ?? "";
 }
 
 function mergeBookLists<T extends BookSummary>(primary: T[], fallback: T[]): T[] {
@@ -1084,12 +1156,11 @@ function buildRecommendationExclusionRules(excludeKeywords: string[], preferNonC
 
 function matchesRecommendationExclusion(
   book: BookSummary,
-  aladin: AladinBook | undefined,
   rules: RecommendationExclusionRules
 ): boolean {
-  if (rules.excludeComics && isComicLikeBook(book, aladin)) return true;
+  if (rules.excludeComics && isComicLikeBook(book)) return true;
   if (rules.keywords.length === 0) return false;
-  const searchable = recommendationSearchText(book, aladin);
+  const searchable = libraryRecommendationSearchText(book);
   return rules.keywords.some((keyword) => searchable.includes(keyword));
 }
 
@@ -1124,40 +1195,21 @@ function selectChildRecommendations(
   return selected;
 }
 
-function isComicLikeBook(book: BookSummary, aladin: AladinBook | undefined): boolean {
-  const searchable = recommendationSearchText(book, aladin);
+function isComicLikeBook(book: BookSummary): boolean {
+  const searchable = libraryRecommendationSearchText(book);
+  const classCode = book.classNo.trim();
+  if (/^6?57/.test(classCode)) return true;
   return /만화|코믹|학습만화|웹툰|흔한남매|쿠키런|카카오프렌즈|놓지마|엉덩이탐정/.test(searchable);
 }
 
-function recommendationSearchText(book: BookSummary, aladin: AladinBook | undefined): string {
+function libraryRecommendationSearchText(book: BookSummary): string {
   return normalizeLookupText([
     book.title,
     book.authors,
     book.publisher,
-    aladin?.title,
-    aladin?.authors,
-    aladin?.publisher,
-    aladin?.description,
-    aladin?.categoryName
+    book.classNo,
+    book.className
   ].filter(Boolean).join(" "));
-}
-
-function interestKeywords(interest: string): string[] {
-  const normalized = normalizeLookupText(interest);
-  const groups: Record<string, string[]> = {
-    과학: ["과학", "실험", "우주", "수학", "생물", "공룡", "로봇", "자연", "환경"],
-    모험: ["모험", "탐험", "여행", "판타지", "미스터리", "마법", "성장"],
-    문학: ["문학", "동화", "소설", "이야기", "명작", "창작"],
-    역사: ["역사", "한국사", "세계사", "조선", "인물", "위인"],
-    그림책: ["그림책", "유아", "창작그림책", "그림동화"],
-    사회: ["사회", "경제", "문화", "철학", "정치"],
-    예술: ["예술", "음악", "미술", "그림", "디자인"]
-  };
-
-  for (const [key, keywords] of Object.entries(groups)) {
-    if (normalized.includes(normalizeLookupText(key))) return keywords;
-  }
-  return [interest];
 }
 
 type LibraryResolution =
@@ -1293,7 +1345,9 @@ async function resolveSingleBook(
         publicationYear: "",
         isbn13: isbn,
         volume: "",
-        imageUrl: ""
+        imageUrl: "",
+        classNo: "",
+        className: ""
       }
     };
   }

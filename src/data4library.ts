@@ -11,6 +11,8 @@ export type BookSummary = {
   isbn13: string;
   volume: string;
   imageUrl: string;
+  classNo: string;
+  className: string;
   loanCount?: number;
 };
 
@@ -537,6 +539,8 @@ function normalizeBook(value: unknown): BookSummary {
     isbn13: cleanText(item.isbn13 ?? item.isbn),
     volume: cleanText(item.vol ?? item.volume),
     imageUrl: cleanText(item.bookImageURL ?? item.bookImageUrl ?? item.imageUrl),
+    classNo: cleanText(item.class_no ?? item.classNo ?? item.classCode ?? item.kdc ?? item.kdcCode),
+    className: cleanText(item.class_nm ?? item.classNm ?? item.className ?? item.kdcName),
     loanCount: numberFrom(item.loanCnt ?? item.loanCount)
   };
 }
