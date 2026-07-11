@@ -422,6 +422,10 @@ export class Data4LibraryClient {
       }
       const text = await response.text();
       const parsed = this.parser.parse(text) as unknown;
+      const upstreamError = findData4LibraryError(parsed);
+      if (upstreamError) {
+        throw new Error(`Data4Library API error: ${upstreamError}`);
+      }
       this.cache.set(cacheKey, parsed);
       return parsed;
     } finally {
@@ -792,6 +796,44 @@ function walk(value: unknown, visit: (key: string, value: unknown) => void, key 
 
 function asObject(value: unknown): XmlObject | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as XmlObject : undefined;
+}
+
+function findData4LibraryError(value: unknown): string | undefined {
+  const item = asObject(value);
+  if (!item) return undefined;
+
+  const directError = item.error ?? item.errors ?? item.err;
+  if (directError !== undefined) {
+    const text = flattenText(directError).join(" ");
+    if (text) return truncateErrorBody(text);
+  }
+
+  const codeText = firstText(item, ["resultCode", "returnCode", "statusCode", "errorCode", "errCode"]);
+  if (codeText && !isSuccessCode(codeText)) {
+    const message = firstText(item, ["message", "msg", "resultMsg", "returnMsg", "errorMessage", "errMsg"]);
+    return truncateErrorBody([codeText, message].filter(Boolean).join(" "));
+  }
+
+  const message = firstText(item, ["errorMessage", "errMsg", "message", "msg"]);
+  if (message && looksLikeUpstreamError(message)) {
+    return truncateErrorBody(message);
+  }
+
+  for (const child of Object.values(item)) {
+    const childError = findData4LibraryError(child);
+    if (childError) return childError;
+  }
+
+  return undefined;
+}
+
+function isSuccessCode(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return ["0", "00", "000", "success", "ok", "정상"].includes(normalized);
+}
+
+function looksLikeUpstreamError(value: string): boolean {
+  return /auth|key|invalid|denied|error|fail|인증|키|오류|에러|실패|권한|잘못|누락/i.test(value);
 }
 
 function isAbortError(error: unknown): boolean {
