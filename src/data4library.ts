@@ -114,6 +114,7 @@ export class MissingKakaoRestApiKeyError extends Error {
 export class Data4LibraryClient {
   private readonly cache: TtlCache<unknown>;
   private readonly librarySearchCache: TtlCache<LibrarySummary[]>;
+  private readonly staleNotices: string[] = [];
   private readonly parser = new XMLParser({
     ignoreAttributes: false,
     trimValues: true,
@@ -128,6 +129,10 @@ export class Data4LibraryClient {
 
   get cacheSize(): number {
     return this.cache.size;
+  }
+
+  consumeStaleNotices(): string[] {
+    return this.staleNotices.splice(0);
   }
 
   hasAuthKey(): boolean {
@@ -428,6 +433,13 @@ export class Data4LibraryClient {
       }
       this.cache.set(cacheKey, parsed);
       return parsed;
+    } catch (error) {
+      const stale = this.cache.getStale(cacheKey);
+      if (stale !== undefined) {
+        this.staleNotices.push(formatStaleNotice(endpoint, stale.storedAt, error));
+        return stale.value;
+      }
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -834,6 +846,12 @@ function isSuccessCode(value: string): boolean {
 
 function looksLikeUpstreamError(value: string): boolean {
   return /auth|key|invalid|denied|error|fail|인증|키|오류|에러|실패|권한|잘못|누락/i.test(value);
+}
+
+function formatStaleNotice(endpoint: string, storedAt: number, error: unknown): string {
+  const ageMinutes = Math.max(0, Math.round((Date.now() - storedAt) / 60000));
+  const reason = error instanceof Error ? error.message : String(error);
+  return `정보나루 ${endpoint} 실시간 조회가 실패해 약 ${ageMinutes}분 전 마지막 정상 응답을 사용했습니다. 원인: ${truncateErrorBody(reason)}`;
 }
 
 function isAbortError(error: unknown): boolean {

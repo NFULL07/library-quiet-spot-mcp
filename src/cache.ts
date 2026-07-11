@@ -1,5 +1,6 @@
 type CacheEntry<T> = {
   expiresAt: number;
+  storedAt: number;
   value: T;
 };
 
@@ -12,15 +13,20 @@ export class TtlCache<T> {
     const entry = this.entries.get(key);
     if (!entry) return undefined;
     if (Date.now() > entry.expiresAt) {
-      this.entries.delete(key);
       return undefined;
     }
     return entry.value;
   }
 
+  getStale(key: string): CacheEntry<T> | undefined {
+    return this.entries.get(key);
+  }
+
   set(key: string, value: T): void {
+    const storedAt = Date.now();
     this.entries.set(key, {
-      expiresAt: Date.now() + this.ttlMs,
+      expiresAt: storedAt + this.ttlMs,
+      storedAt,
       value
     });
   }

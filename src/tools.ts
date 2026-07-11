@@ -246,11 +246,12 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>
 ): Promise<string> {
+  client.consumeStaleNotices();
   try {
+    let markdown: string;
     switch (name) {
       case "recommend_books_for_child":
-        return guardMarkdown(
-          await recommendBooksForChild(
+        markdown = await recommendBooksForChild(
             client,
             optionalNumber(args, "age"),
             optionalString(args, "grade"),
@@ -264,61 +265,70 @@ export async function callTool(
             optionalNumber(args, "longitude"),
             optionalString(args, "region"),
             optionalNumber(args, "limit")
-          )
         );
+        break;
       case "find_nearby_libraries":
-        return guardMarkdown(
-          await findNearbyLibraries(
+        markdown = await findNearbyLibraries(
             client,
             optionalString(args, "place_name"),
             optionalNumber(args, "latitude"),
             optionalNumber(args, "longitude"),
             optionalNumber(args, "radius_km"),
             optionalNumber(args, "limit")
-          )
         );
+        break;
       case "plan_library_reading_visit":
-        return guardMarkdown(
-          await planLibraryReadingVisit(
+        markdown = await planLibraryReadingVisit(
             client,
             optionalString(args, "library_name"),
             optionalString(args, "library_code"),
             optionalString(args, "book_title"),
             optionalString(args, "isbn")
-          )
         );
+        break;
       case "find_best_visit_time":
-        return guardMarkdown(
-          await findBestVisitTime(
+        markdown = await findBestVisitTime(
             client,
             optionalString(args, "library_name"),
             optionalString(args, "library_code")
-          )
         );
+        break;
       case "find_trending_books_and_library_match":
-        return guardMarkdown(
-          await findTrendingBooksAndLibraryMatch(
+        markdown = await findTrendingBooksAndLibraryMatch(
             client,
             optionalString(args, "region"),
             optionalString(args, "age_group"),
             optionalString(args, "library_name"),
             optionalString(args, "library_code")
-          )
         );
+        break;
       case "generate_data_driven_reading_roadmap":
-        return guardMarkdown(
-          await generateReadingRoadmap(
+        markdown = await generateReadingRoadmap(
             client,
             optionalString(args, "book_title"),
             optionalString(args, "isbn")
-          )
         );
+        break;
       default:
         return `알 수 없는 도구입니다: \`${name}\``;
     }
+    return guardMarkdown(appendStaleNotices(markdown, client.consumeStaleNotices()));
   } catch (error) {
-    return formatToolError(error);
+    return guardMarkdown(appendStaleNotices(formatToolError(error), client.consumeStaleNotices()));
   }
+}
+
+function appendStaleNotices(markdown: string, notices: string[]): string {
+  if (notices.length === 0) return markdown;
+  const uniqueNotices = [...new Set(notices)];
+  return [
+    markdown,
+    "",
+    "## 데이터 기준 안내",
+    "",
+    ...uniqueNotices.map((notice) => `- ${notice}`),
+    "- 위 항목은 실시간 정보나루 응답이 아니라 서버에 남아 있던 마지막 정상 응답 기준입니다."
+  ].join("\n");
 }
 
 async function recommendBooksForChild(

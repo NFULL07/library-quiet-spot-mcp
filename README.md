@@ -40,6 +40,7 @@
 - **Location-aware discovery**: 카카오 Local API 장소명 검색 또는 위도/경도 좌표를 기준으로 주변 도서관을 거리순으로 정렬합니다.
 - **Reading-visit planning**: 단일 책 검색에서 끝내지 않고, 목표 도서와 다음 독서 후보의 같은 도서관 소장 여부를 함께 확인합니다.
 - **Name-first UX**: 도서관 이름을 입력받아 내부적으로 `libSrch` 검색 결과의 도서관 코드로 변환합니다.
+- **Stale fallback notice**: 정보나루 실시간 호출이 제한되거나 실패해도 같은 서버 프로세스에 마지막 정상 응답이 남아 있으면 이를 사용하고, 응답 하단에 실시간 데이터가 아닌 마지막 정상 응답 기준임을 표시합니다.
 - **MCP-ready transport**: Streamable HTTP 기반 MCP 서버로 구현했습니다.
 - **Stateless startup**: 서버는 먼저 포트를 열고, 인증키나 외부 API 상태와 무관하게 `tools/list`가 동작하도록 구성했습니다.
 - **XML normalization**: XML 파서가 0건, 1건, 다건을 다르게 반환하는 문제를 `ensureArray`와 빈 값 정규화로 방어합니다.
