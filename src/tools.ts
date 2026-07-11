@@ -368,30 +368,26 @@ async function recommendBooksForChild(
     ].join("\n");
   }
 
-  const augmented = await Promise.all(
-    popularBooks.slice(0, 50).map(async (book, index) => {
-      const aladin = await findAladinMatch(client, book).catch(() => undefined);
+  const baseCandidates = popularBooks.slice(0, 50).map((book, index) => {
       const interestScore = scoreInterestMatch(book, interests);
-      const aladinBoost = aladin?.bestRank ? Math.max(0, 80 - Math.min(aladin.bestRank, 80)) : 0;
       const comicLike = isComicLikeBook(book);
       const excluded = matchesRecommendationExclusion(book, exclusionRules);
       const comicPenalty = comicLike ? (preferNonComic ? 600 : 240) : 0;
       return {
         book,
         ranking: book.ranking ?? index + 1,
-        aladin,
         interestScore,
         comicLike,
         excluded,
-        score: 1000 - ((book.ranking ?? index + 1) * 14) + interestScore + aladinBoost - comicPenalty
+        score: 1000 - ((book.ranking ?? index + 1) * 14) + interestScore - comicPenalty
       };
-    })
-  );
+  });
 
-  const filtered = augmented.filter((candidate) => !candidate.excluded);
-  const sortedCandidates = (filtered.length > 0 ? filtered : augmented)
+  const filtered = baseCandidates.filter((candidate) => !candidate.excluded);
+  const sortedCandidates = (filtered.length > 0 ? filtered : baseCandidates)
     .sort((a, b) => b.score - a.score || a.ranking - b.ranking)
-  const recommendations = selectChildRecommendations(sortedCandidates, safeLimit, preferNonComic === true);
+  const selectedRecommendations = selectChildRecommendations(sortedCandidates, safeLimit, preferNonComic === true);
+  const recommendations = await enrichChildRecommendationsWithAladin(client, selectedRecommendations);
 
   const holdingRows = await buildChildRecommendationRows(client, recommendations, libraryTarget.libraries, profile, interests);
   const topBook = recommendations[0]?.book;
@@ -964,6 +960,19 @@ async function findAladinMatch(client: Data4LibraryClient, book: BookSummary): P
   return aladinBooks.find((item) => normalizeBookBaseTitle(item.title) === normalizedTitle);
 }
 
+async function enrichChildRecommendationsWithAladin(
+  client: Data4LibraryClient,
+  recommendations: ChildRecommendationCandidate[]
+): Promise<ChildRecommendationCandidate[]> {
+  return Promise.all(recommendations.map(async (candidate) => {
+    const aladin = await findAladinMatch(client, candidate.book).catch(() => undefined);
+    return {
+      ...candidate,
+      aladin
+    };
+  }));
+}
+
 async function buildChildRecommendationRows(
   client: Data4LibraryClient,
   recommendations: ChildRecommendationCandidate[],
@@ -984,6 +993,7 @@ async function buildChildRecommendationRows(
     const reasons = [
       `${profile.label} 연령대 인기 대출 ${candidate.ranking}위권`,
       candidate.interestScore > 0 ? `관심사(${interests.join(", ")})와 KDC/도서관 분류 매칭` : "",
+      candidate.aladin?.bestRank ? `알라딘 베스트셀러 순위 보조 신호` : "",
       candidate.comicLike ? "" : "일반 지식서/비만화 후보"
     ].filter(Boolean).join("<br>");
 
