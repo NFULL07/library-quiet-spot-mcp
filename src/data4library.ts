@@ -276,14 +276,14 @@ export class Data4LibraryClient {
     };
   }
 
-  async getPopularBooks(region?: string, ageGroup?: string): Promise<PopularBook[]> {
+  async getPopularBooks(region?: string, ageGroup?: string, kdc?: string): Promise<PopularBook[]> {
     const today = new Date();
     const periods = buildPopularBookPeriods(today);
 
     let lastError: unknown;
     for (const period of periods) {
       try {
-        const books = await this.getPopularBooksForPeriod(period.startDt, period.endDt, region, ageGroup);
+        const books = await this.getPopularBooksForPeriod(period.startDt, period.endDt, region, ageGroup, kdc);
         if (books.length > 0) return books;
       } catch (error) {
         lastError = error;
@@ -292,7 +292,7 @@ export class Data4LibraryClient {
       if (!region) continue;
 
       try {
-        const nationalBooks = await this.getPopularBooksForPeriod(period.startDt, period.endDt, undefined, ageGroup);
+        const nationalBooks = await this.getPopularBooksForPeriod(period.startDt, period.endDt, undefined, ageGroup, kdc);
         if (nationalBooks.length > 0) return nationalBooks;
       } catch (error) {
         lastError = error;
@@ -307,13 +307,15 @@ export class Data4LibraryClient {
     startDt: string,
     endDt: string,
     region?: string,
-    ageGroup?: string
+    ageGroup?: string,
+    kdc?: string
   ): Promise<PopularBook[]> {
     const xml = await this.requestXml("loanItemSrch", {
       startDt,
       endDt,
       region,
       age: ageGroup,
+      kdc,
       pageNo: "1",
       pageSize: "50"
     });

@@ -1,4 +1,4 @@
-import { Data4LibraryClient, MissingAuthKeyError, MissingKakaoRestApiKeyError, BookSummary, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult, NearbyLibrary, PlaceSummary, AladinBook } from "./data4library.js";
+import { Data4LibraryClient, MissingAuthKeyError, MissingKakaoRestApiKeyError, BookSummary, PopularBook, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult, NearbyLibrary, PlaceSummary, AladinBook } from "./data4library.js";
 import { guardMarkdown, markdownTable } from "./text.js";
 
 export type ToolDefinition = {
@@ -354,7 +354,8 @@ async function recommendBooksForChild(
 
   const effectiveRegion = region
     ?? libraryTarget.libraries.map((library) => inferRegionCodeFromAddress(library.address)).find(Boolean);
-  const popularBooks = await client.getPopularBooks(effectiveRegion, profile.ageGroupCode);
+  const popularSource = await getChildPopularBooks(client, effectiveRegion, profile.ageGroupCode, interests);
+  const popularBooks = popularSource.books;
   const exclusionRules = buildRecommendationExclusionRules(excludeKeywords, preferNonComic);
   if (popularBooks.length === 0) {
     return [
@@ -409,6 +410,7 @@ async function recommendBooksForChild(
     preferNonComic ? "추천 조건: 만화/학습만화 제외 우선" : "",
     excludeKeywords.length > 0 ? `제외 키워드: ${excludeKeywords.join(", ")}` : "",
     effectiveRegion ? `정보나루 지역 코드: \`${effectiveRegion}\`` : "정보나루 지역 코드: 전국",
+    popularSource.kdcCodes.length > 0 ? `정보나루 주제분류: ${popularSource.kdcCodes.map(formatKdcCode).join(", ")}` : "",
     libraryTarget.summary,
     "",
     "정보나루 연령대별 인기 대출 데이터를 기본 후보로 사용하고, 추천 도서는 지정 도서관 또는 주변 도서관의 소장·대출 정보와 함께 보여줍니다.",
@@ -750,6 +752,11 @@ type RecommendationExclusionRules = {
   excludeComics: boolean;
 };
 
+type ChildPopularBookSource = {
+  books: PopularBook[];
+  kdcCodes: string[];
+};
+
 function resolveChildReadingProfile(age: number | undefined, grade: string | undefined): ChildReadingProfile | undefined {
   const gradeText = grade ? normalizeLookupText(grade) : "";
   const schoolProfile = parseSchoolProfile(gradeText, grade);
@@ -958,6 +965,102 @@ function scoreInterestMatch(book: BookSummary, aladin: AladinBook | undefined, i
     }
   }
   return score;
+}
+
+async function getChildPopularBooks(
+  client: Data4LibraryClient,
+  region: string | undefined,
+  ageGroupCode: string,
+  interests: string[]
+): Promise<ChildPopularBookSource> {
+  const kdcCodes = interestKdcCodes(interests);
+  if (kdcCodes.length === 0) {
+    return {
+      books: await client.getPopularBooks(region, ageGroupCode),
+      kdcCodes: []
+    };
+  }
+
+  const subjectBooks: BookSummary[] = [];
+  let lastError: unknown;
+  for (const kdc of kdcCodes) {
+    try {
+      subjectBooks.push(...await client.getPopularBooks(region, ageGroupCode, kdc));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const dedupedSubjectBooks = dedupeBooks(subjectBooks);
+  if (dedupedSubjectBooks.length >= 5) {
+    return { books: dedupedSubjectBooks, kdcCodes };
+  }
+
+  try {
+    const fallbackBooks = await client.getPopularBooks(region, ageGroupCode);
+    return {
+      books: mergeBookLists(dedupedSubjectBooks, fallbackBooks),
+      kdcCodes
+    };
+  } catch (error) {
+    if (dedupedSubjectBooks.length > 0) return { books: dedupedSubjectBooks, kdcCodes };
+    if (lastError instanceof Error) throw lastError;
+    throw error;
+  }
+}
+
+function interestKdcCodes(interests: string[]): string[] {
+  const codes = new Set<string>();
+  for (const interest of interests) {
+    const normalized = normalizeLookupText(interest);
+    if (/과학|실험|우주|수학|생물|공룡|자연|환경|지구|천문/.test(normalized)) {
+      codes.add("4");
+    }
+    if (/로봇|코딩|컴퓨터|기술|발명|공학|인공지능|ai/.test(normalized)) {
+      codes.add("5");
+    }
+    if (/문학|동화|소설|이야기|명작|창작|그림책/.test(normalized)) {
+      codes.add("8");
+    }
+    if (/역사|한국사|세계사|조선|인물|위인/.test(normalized)) {
+      codes.add("9");
+    }
+    if (/사회|경제|문화|철학|정치|직업/.test(normalized)) {
+      codes.add("3");
+    }
+    if (/예술|음악|미술|그림|디자인|만들기/.test(normalized)) {
+      codes.add("6");
+    }
+  }
+  return [...codes].slice(0, 2);
+}
+
+function formatKdcCode(code: string): string {
+  const labels: Record<string, string> = {
+    "3": "300 사회과학",
+    "4": "400 자연과학",
+    "5": "500 기술과학",
+    "6": "600 예술",
+    "8": "800 문학",
+    "9": "900 역사"
+  };
+  return labels[code] ?? code;
+}
+
+function mergeBookLists<T extends BookSummary>(primary: T[], fallback: T[]): T[] {
+  return dedupeBooks([...primary, ...fallback]);
+}
+
+function dedupeBooks<T extends BookSummary>(books: T[]): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const book of books) {
+    const key = book.isbn13 || `${normalizeBookBaseTitle(book.title)}:${normalizeAuthorKey(book.authors)}`;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(book);
+  }
+  return result;
 }
 
 function buildRecommendationExclusionRules(excludeKeywords: string[], preferNonComic: boolean | undefined): RecommendationExclusionRules {
