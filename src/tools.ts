@@ -822,7 +822,7 @@ const KDC_GROUPS: KdcGroup[] = [
   }
 ];
 
-function resolveChildReadingProfile(age: number | undefined, grade: string | undefined): ChildReadingProfile | undefined {
+export function resolveChildReadingProfile(age: number | undefined, grade: string | undefined): ChildReadingProfile | undefined {
   const gradeText = grade ? normalizeLookupText(grade) : "";
   const schoolProfile = parseSchoolProfile(gradeText, grade);
   if (schoolProfile) return schoolProfile;
@@ -1023,7 +1023,7 @@ function formatLibraryHoldings(holdings: Array<{ library: LibrarySummary; exist?
   )).join("<br>");
 }
 
-function scoreInterestMatch(book: BookSummary, interests: string[]): number {
+export function scoreInterestMatch(book: BookSummary, interests: string[]): number {
   if (interests.length === 0) return 0;
   const searchable = libraryRecommendationSearchText(book);
   const bookKdcTags = kdcTagsForBook(book);
@@ -1082,7 +1082,7 @@ async function getChildPopularBooks(
   }
 }
 
-function interestKdcCodes(interests: string[]): string[] {
+export function interestKdcCodes(interests: string[]): string[] {
   const codes = new Set<string>();
   for (const interest of interests) {
     const group = kdcGroupForInterest(interest);
@@ -1215,7 +1215,7 @@ function selectChildRecommendations(
   return selected;
 }
 
-function isComicLikeBook(book: BookSummary): boolean {
+export function isComicLikeBook(book: BookSummary): boolean {
   const searchable = libraryRecommendationSearchText(book);
   const classCode = book.classNo.trim();
   if (/^6?57/.test(classCode)) return true;
@@ -1311,7 +1311,7 @@ async function resolveSingleLibrary(
   return { kind: "library", library: libraries[0] };
 }
 
-function selectBestLibraryMatch(query: string, libraries: LibrarySummary[]): LibrarySummary | undefined {
+export function selectBestLibraryMatch(query: string, libraries: LibrarySummary[]): LibrarySummary | undefined {
   const normalizedQuery = normalizeLookupText(query);
   const exactMatches = libraries.filter((library) => normalizeLookupText(library.name) === normalizedQuery);
   if (exactMatches.length === 1) return exactMatches[0];
@@ -1575,7 +1575,7 @@ async function generateReadingRoadmap(
   ].join("\n");
 }
 
-function rankQuietPoints(points: TrendPoint[]): Array<TrendPoint & { percentile: number }> {
+export function rankQuietPoints(points: TrendPoint[]): Array<TrendPoint & { percentile: number }> {
   const sortedCounts = [...points].map((point) => point.count).sort((a, b) => a - b);
   const maxIndex = Math.max(sortedCounts.length - 1, 1);
   return points
@@ -1722,7 +1722,7 @@ type TimeRange = {
   endMinutes: number;
 };
 
-function buildOperatingHourVisitCandidates(operatingTime: string): VisitCandidate[] {
+export function buildOperatingHourVisitCandidates(operatingTime: string): VisitCandidate[] {
   const ranges = extractTimeRanges(operatingTime);
   if (ranges.length === 0) return [];
 
@@ -1827,7 +1827,7 @@ function firstVisitCandidate(library: NearbyLibrary): string {
   return candidate ? `${candidate.label} ${candidate.time}` : "운영시간 확인 필요";
 }
 
-function inferRegionCodeFromAddress(address: string): string | undefined {
+export function inferRegionCodeFromAddress(address: string): string | undefined {
   const normalized = normalizeLookupText(address);
   const entries: Array<[string, string]> = [
     ["서울", "11"],

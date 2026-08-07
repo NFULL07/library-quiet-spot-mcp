@@ -590,7 +590,7 @@ function normalizePlace(value: unknown): PlaceSummary {
   };
 }
 
-function normalizeLibrary(value: unknown): LibrarySummary {
+export function normalizeLibrary(value: unknown): LibrarySummary {
   const item = asObject(value) ?? {};
   const latitude = normalizeLatitude(item);
   const longitude = normalizeLongitude(item);
@@ -780,16 +780,16 @@ function flattenText(value: unknown): string[] {
   return Object.values(value as XmlObject).flatMap(flattenText);
 }
 
-function parseBooleanLike(value: string): boolean | undefined {
+export function parseBooleanLike(value: string): boolean | undefined {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return undefined;
-  if (["y", "yes", "true", "1"].includes(normalized)) return true;
   if (["n", "no", "false", "0"].includes(normalized)) return false;
+  if (["불가", "불가능", "없음", "미소장", "대출중"].some((token) => normalized.includes(token))) {
+    return false;
+  }
+  if (["y", "yes", "true", "1"].includes(normalized)) return true;
   if (["가능", "소장", "있음", "대출가능"].some((token) => normalized.includes(token))) {
     return true;
-  }
-  if (["불가", "없음", "미소장"].some((token) => normalized.includes(token))) {
-    return false;
   }
   return undefined;
 }
@@ -810,7 +810,7 @@ function asObject(value: unknown): XmlObject | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as XmlObject : undefined;
 }
 
-function findData4LibraryError(value: unknown): string | undefined {
+export function findData4LibraryError(value: unknown): string | undefined {
   const item = asObject(value);
   if (!item) return undefined;
 
@@ -862,7 +862,7 @@ function truncateErrorBody(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
-function haversineKm(
+export function haversineKm(
   latitudeA: number,
   longitudeA: number,
   latitudeB: number,
