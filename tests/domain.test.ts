@@ -2,15 +2,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { BookSummary, LibrarySummary, TrendPoint } from "../src/data4library.js";
 import {
-  buildOperatingHourVisitCandidates,
-  inferRegionCodeFromAddress,
   interestKdcCodes,
   isComicLikeBook,
-  rankQuietPoints,
   resolveChildReadingProfile,
-  scoreInterestMatch,
-  selectBestLibraryMatch
-} from "../src/tools.js";
+  scoreInterestMatch
+} from "../src/services/child-recommendation.js";
+import {
+  buildOperatingHourVisitCandidates,
+  inferRegionCodeFromAddress,
+  rankQuietPoints
+} from "../src/services/library-visit.js";
+import { selectBestLibraryMatch } from "../src/services/resolvers.js";
 
 const baseBook: BookSummary = {
   title: "어린이를 위한 우주 이야기",

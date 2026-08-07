@@ -62,13 +62,16 @@ Express + StreamableHTTPServerTransport
       v
 MCP tool handlers
       |
-      v
-Data4Library client
+      +-- Child recommendation service
+      +-- Library visit service
+      +-- Library/book resolvers
       |
-      +-- Library-name resolver
-      +-- TTL cache
-      +-- XML parser
-      +-- Markdown formatter
+      v
+Data4Library / Kakao Local / Aladin clients
+      |
+      +-- Bounded LRU + stale cache
+      +-- XML/JSON normalization
+      +-- Request-scoped fallback metadata
 ```
 
 ## Example Prompts

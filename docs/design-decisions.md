@@ -24,11 +24,14 @@ The reading roadmap intentionally does not invent new book recommendations. It o
 
 This keeps the server explainable: every recommendation can be traced back to public library usage data.
 
-## 4. Prefer Small, Focused Tool Count
+## 4. Prefer Focused User-Intent Tools
 
-The server exposes three tools because tool selection quality matters in conversational MCP use. Each tool answers a different user intent:
+Tool selection quality matters in conversational MCP use. The server groups raw API operations into six user-intent tools rather than exposing every upstream endpoint:
 
-- visit planning
+- child-specific recommendation
+- nearby library discovery
+- reading-visit planning
+- quiet-time guidance
 - popular book availability
 - follow-up reading
 
@@ -62,3 +65,15 @@ The repository is structured for public review:
 - `.env` and `.env.*` are ignored.
 - `.env.example` uses placeholder values.
 - README focuses on product, architecture, and validation rather than private development notes.
+
+## 8. Keep Transport, Orchestration, and Resolution Separate
+
+The MCP dispatcher only validates arguments and routes tool calls. Child recommendation and library-visit orchestration live in separate services, while library/book ambiguity handling lives in resolvers.
+
+This boundary makes three kinds of change independent:
+
+- MCP schema and tool-selection wording
+- recommendation or visit-planning rules
+- name/ISBN matching and ambiguity policy
+
+The split is guarded by unit and upstream-contract tests so moving code does not silently change user-facing behavior.
