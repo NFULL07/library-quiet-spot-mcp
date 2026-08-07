@@ -10,7 +10,9 @@
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "test:integration": "tsx --test tests/integration/**/*.test.ts",
+    "test:live": "tsx --test tests/live/**/*.test.ts"
   },
   "engines": {
     "node": ">=20"

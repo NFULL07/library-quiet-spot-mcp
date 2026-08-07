@@ -1,6 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { TtlCache } from "./cache.js";
 import { AppConfig } from "./config.js";
+import { getRequestContext } from "./request-context.js";
 import { cleanText, ensureArray, numberFrom } from "./text.js";
 
 export type BookSummary = {
@@ -99,6 +100,10 @@ export type AladinBook = {
 
 type XmlObject = Record<string, unknown>;
 
+export type Data4LibraryClientOptions = {
+  fetch?: typeof globalThis.fetch;
+};
+
 export class MissingAuthKeyError extends Error {
   constructor() {
     super("DATA4LIBRARY_AUTH_KEY is not configured.");
@@ -114,7 +119,7 @@ export class MissingKakaoRestApiKeyError extends Error {
 export class Data4LibraryClient {
   private readonly cache: TtlCache<unknown>;
   private readonly librarySearchCache: TtlCache<LibrarySummary[]>;
-  private readonly staleNotices: string[] = [];
+  private readonly fetch: typeof globalThis.fetch;
   private readonly parser = new XMLParser({
     ignoreAttributes: false,
     trimValues: true,
@@ -122,17 +127,14 @@ export class Data4LibraryClient {
     parseAttributeValue: false
   });
 
-  constructor(private readonly config: AppConfig) {
+  constructor(private readonly config: AppConfig, options: Data4LibraryClientOptions = {}) {
     this.cache = new TtlCache(config.cacheTtlMs);
     this.librarySearchCache = new TtlCache(config.cacheTtlMs);
+    this.fetch = options.fetch ?? globalThis.fetch;
   }
 
   get cacheSize(): number {
     return this.cache.size;
-  }
-
-  consumeStaleNotices(): string[] {
-    return this.staleNotices.splice(0);
   }
 
   hasAuthKey(): boolean {
@@ -416,7 +418,7 @@ export class Data4LibraryClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     try {
-      const response = await fetch(url, { signal: controller.signal }).catch((error: unknown) => {
+      const response = await this.fetch(url, { signal: controller.signal }).catch((error: unknown) => {
         if (isAbortError(error)) {
           throw new Error(`Data4Library request timed out after ${this.config.requestTimeoutMs}ms`);
         }
@@ -436,7 +438,7 @@ export class Data4LibraryClient {
     } catch (error) {
       const stale = this.cache.getStale(cacheKey);
       if (stale !== undefined) {
-        this.staleNotices.push(formatStaleNotice(endpoint, stale.storedAt, error));
+        getRequestContext()?.staleNotices.push(formatStaleNotice(endpoint, stale.storedAt, error));
         return stale.value;
       }
       throw error;
@@ -467,7 +469,7 @@ export class Data4LibraryClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     try {
-      const response = await fetch(url, {
+      const response = await this.fetch(url, {
         signal: controller.signal,
         headers: {
           Authorization: `KakaoAK ${this.config.kakaoRestApiKey}`
@@ -515,7 +517,7 @@ export class Data4LibraryClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     try {
-      const response = await fetch(url, { signal: controller.signal }).catch((error: unknown) => {
+      const response = await this.fetch(url, { signal: controller.signal }).catch((error: unknown) => {
         if (isAbortError(error)) {
           throw new Error(`Aladin OpenAPI request timed out after ${this.config.requestTimeoutMs}ms`);
         }

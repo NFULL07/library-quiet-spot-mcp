@@ -1,4 +1,5 @@
 import { Data4LibraryClient, MissingAuthKeyError, MissingKakaoRestApiKeyError, BookSummary, PopularBook, TrendPoint, LibrarySummary, UsageAnalysis, BookExistResult, NearbyLibrary, PlaceSummary, AladinBook } from "./data4library.js";
+import { createRequestContext, RequestContext, runWithRequestContext } from "./request-context.js";
 import { guardMarkdown, markdownTable } from "./text.js";
 
 export type ToolDefinition = {
@@ -244,12 +245,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 export async function callTool(
   client: Data4LibraryClient,
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context: RequestContext = createRequestContext()
 ): Promise<string> {
-  client.consumeStaleNotices();
-  try {
-    let markdown: string;
-    switch (name) {
+  return runWithRequestContext(context, async () => {
+    try {
+      let markdown: string;
+      switch (name) {
       case "recommend_books_for_child":
         markdown = await recommendBooksForChild(
             client,
@@ -309,13 +311,14 @@ export async function callTool(
             optionalString(args, "isbn")
         );
         break;
-      default:
-        return `알 수 없는 도구입니다: \`${name}\``;
+        default:
+          return `알 수 없는 도구입니다: \`${name}\``;
+      }
+      return guardMarkdown(appendStaleNotices(markdown, context.staleNotices));
+    } catch (error) {
+      return guardMarkdown(appendStaleNotices(formatToolError(error), context.staleNotices));
     }
-    return guardMarkdown(appendStaleNotices(markdown, client.consumeStaleNotices()));
-  } catch (error) {
-    return guardMarkdown(appendStaleNotices(formatToolError(error), client.consumeStaleNotices()));
-  }
+  });
 }
 
 function appendStaleNotices(markdown: string, notices: string[]): string {
