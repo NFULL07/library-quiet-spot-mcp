@@ -52,6 +52,7 @@
 - **Secret hygiene**: API 키는 환경변수로만 주입하며 `.env`와 `.env.*`는 Git 추적에서 제외합니다.
 
 자세한 설계 판단은 [docs/design-decisions.md](docs/design-decisions.md)에 정리했습니다.
+리뷰 지적부터 설계 선택, 장애 재현, 커밋별 검증 근거는 [docs/engineering-hardening.md](docs/engineering-hardening.md)에 정리했습니다.
 
 ## Architecture
 
@@ -166,11 +167,15 @@ The server can start and expose tool metadata without an API key. Tool calls tha
 ## Validation
 
 ```powershell
+npm.cmd run typecheck
+npm.cmd test
 npm.cmd run build
 npm.cmd audit --omit=dev
 ```
 
-Both commands should pass before deployment.
+All commands should pass before deployment. `npm.cmd run test:failure` runs only injected failure scenarios, while `npm.cmd run test:integration` runs deterministic upstream contract and HTTP tests without consuming real API quota.
+
+After starting a local server, `npm.cmd run test:load` sends 40 bounded concurrent `tools/list` requests by default. Tune it with `LOAD_TEST_URL`, `LOAD_TEST_REQUESTS`, `LOAD_TEST_CONCURRENCY`, and `LOAD_TEST_P95_LIMIT_MS`.
 
 ## Security Notes
 

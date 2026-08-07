@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "tsx --test tests/**/*.test.ts",
     "test:integration": "tsx --test tests/integration/**/*.test.ts",
-    "test:live": "tsx --test tests/live/**/*.test.ts"
+    "test:failure": "tsx --test tests/failure/**/*.test.ts",
+    "test:live": "tsx --test tests/live/**/*.test.ts",
+    "test:load": "node scripts/load-test.mjs",
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "engines": {
     "node": ">=20"

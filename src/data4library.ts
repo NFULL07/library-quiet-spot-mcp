@@ -147,7 +147,8 @@ export class Data4LibraryClient {
   constructor(private readonly config: AppConfig, options: Data4LibraryClientOptions = {}) {
     const cacheOptions = {
       maxSize: config.cacheMaxEntries,
-      staleTtlMs: config.cacheStaleTtlMs
+      staleTtlMs: config.cacheStaleTtlMs,
+      now: options.now
     };
     this.cache = new TtlCache(config.cacheTtlMs, cacheOptions);
     this.librarySearchCache = new TtlCache(config.cacheTtlMs, cacheOptions);

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --omit=dev
+      - name: Bounded MCP load smoke
+        shell: bash
+        run: |
+          node dist/server.js > server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          healthy=false
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:3000/health > /dev/null; then
+              healthy=true
+              break
+            fi
+            sleep 0.25
+          done
+          if [ "$healthy" != "true" ]; then
+            cat server.log
+            exit 1
+          fi
+          npm run test:load
