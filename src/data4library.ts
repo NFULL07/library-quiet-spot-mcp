@@ -128,13 +128,17 @@ export class Data4LibraryClient {
   });
 
   constructor(private readonly config: AppConfig, options: Data4LibraryClientOptions = {}) {
-    this.cache = new TtlCache(config.cacheTtlMs);
-    this.librarySearchCache = new TtlCache(config.cacheTtlMs);
+    const cacheOptions = {
+      maxSize: config.cacheMaxEntries,
+      staleTtlMs: config.cacheStaleTtlMs
+    };
+    this.cache = new TtlCache(config.cacheTtlMs, cacheOptions);
+    this.librarySearchCache = new TtlCache(config.cacheTtlMs, cacheOptions);
     this.fetch = options.fetch ?? globalThis.fetch;
   }
 
   get cacheSize(): number {
-    return this.cache.size;
+    return this.cache.size + this.librarySearchCache.size;
   }
 
   hasAuthKey(): boolean {

@@ -10,6 +10,8 @@ const liveConfig: AppConfig = {
   kakaoRestApiKey: process.env.KAKAO_REST_API_KEY,
   aladinTtbKey: process.env.ALADIN_TTB_KEY,
   cacheTtlMs: 1000,
+  cacheStaleTtlMs: 1000,
+  cacheMaxEntries: 50,
   requestTimeoutMs: 10000
 };
 

@@ -9,6 +9,8 @@ const config: AppConfig = {
   kakaoRestApiKey: "kakao-test-key",
   aladinTtbKey: "aladin-test-key",
   cacheTtlMs: 1000,
+  cacheStaleTtlMs: 1000,
+  cacheMaxEntries: 50,
   requestTimeoutMs: 1000
 };
 

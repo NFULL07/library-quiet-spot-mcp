@@ -4,6 +4,8 @@ export type AppConfig = {
   kakaoRestApiKey?: string;
   aladinTtbKey?: string;
   cacheTtlMs: number;
+  cacheStaleTtlMs: number;
+  cacheMaxEntries: number;
   requestTimeoutMs: number;
 };
 
@@ -21,6 +23,8 @@ export function loadConfig(): AppConfig {
     kakaoRestApiKey: process.env.KAKAO_REST_API_KEY?.trim() || undefined,
     aladinTtbKey: process.env.ALADIN_TTB_KEY?.trim() || undefined,
     cacheTtlMs: readPositiveInt("CACHE_TTL_SECONDS", 60 * 60 * 6) * 1000,
+    cacheStaleTtlMs: readPositiveInt("CACHE_STALE_TTL_SECONDS", 60 * 60 * 24) * 1000,
+    cacheMaxEntries: readPositiveInt("CACHE_MAX_ENTRIES", 500),
     requestTimeoutMs: readPositiveInt("REQUEST_TIMEOUT_MS", 5000)
   };
 }

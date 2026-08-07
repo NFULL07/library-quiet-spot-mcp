@@ -10,6 +10,8 @@ it("keeps stale fallback notices isolated across concurrent requests", async () 
     port: 3000,
     authKey: "test-key",
     cacheTtlMs: 1,
+    cacheStaleTtlMs: 1000,
+    cacheMaxEntries: 50,
     requestTimeoutMs: 1000
   };
   const client = new Data4LibraryClient(config, {
