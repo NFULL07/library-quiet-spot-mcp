@@ -83,3 +83,9 @@ The split is guarded by unit and upstream-contract tests so moving code does not
 Retries are intentionally narrow because Data4Library enforces a daily request quota. Network failures, timeouts, and selected 5xx responses use a short bounded exponential backoff. A 429 response is retried only when the server supplies a short `Retry-After`; application-level quota errors are never retried.
 
 Each upstream provider has an independent circuit breaker. Repeated failures open only that provider's circuit, allowing stale Data4Library cache data or unaffected Kakao/Aladin operations to continue without spending time and quota on requests that are likely to fail.
+
+## 10. Treat PlayMCP as the Authentication Boundary
+
+This MCP is intentionally public and read-only, so user authentication remains the PlayMCP platform's responsibility. The application still protects its own HTTP edge with an explicit Host allowlist, optional Origin validation, JSON-only POST requests, defensive headers, and a bounded in-process rate limiter.
+
+Host and rate-limit settings are environment-configurable because proxy topology differs between local development and Kakao Cloud. Health and readiness endpoints are not Host-restricted so Kubernetes probes continue to work through internal service names.

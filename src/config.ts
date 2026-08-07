@@ -12,6 +12,11 @@ export type AppConfig = {
   upstreamRetryBaseMs: number;
   circuitFailureThreshold: number;
   circuitResetMs: number;
+  allowedHosts: string[];
+  allowedOrigins: string[];
+  trustProxyHops: number;
+  rateLimitWindowMs: number;
+  rateLimitMaxRequests: number;
 };
 
 function readPositiveInt(name: string, fallback: number): number {
@@ -24,6 +29,20 @@ function readPositiveInt(name: string, fallback: number): number {
 function readLogLevel(): AppConfig["logLevel"] {
   const value = process.env.LOG_LEVEL?.trim().toLowerCase();
   return value === "debug" || value === "warn" || value === "error" ? value : "info";
+}
+
+function readNonNegativeInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function readCsv(name: string, fallback: string[]): string[] {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const entries = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return entries.length > 0 ? entries : fallback;
 }
 
 export function loadConfig(): AppConfig {
@@ -40,6 +59,16 @@ export function loadConfig(): AppConfig {
     upstreamMaxAttempts: readPositiveInt("UPSTREAM_MAX_ATTEMPTS", 2),
     upstreamRetryBaseMs: readPositiveInt("UPSTREAM_RETRY_BASE_MS", 150),
     circuitFailureThreshold: readPositiveInt("CIRCUIT_FAILURE_THRESHOLD", 5),
-    circuitResetMs: readPositiveInt("CIRCUIT_RESET_MS", 30000)
+    circuitResetMs: readPositiveInt("CIRCUIT_RESET_MS", 30000),
+    allowedHosts: readCsv("ALLOWED_HOSTS", [
+      "localhost",
+      "127.0.0.1",
+      "library-book-guide-mcp",
+      "library-book-guide-mcp.playmcp-endpoint.kakaocloud.io"
+    ]),
+    allowedOrigins: readCsv("ALLOWED_ORIGINS", ["https://playmcp.kakao.com"]),
+    trustProxyHops: readNonNegativeInt("TRUST_PROXY_HOPS", 1),
+    rateLimitWindowMs: readPositiveInt("RATE_LIMIT_WINDOW_MS", 60000),
+    rateLimitMaxRequests: readPositiveInt("RATE_LIMIT_MAX_REQUESTS", 120)
   };
 }

@@ -17,7 +17,12 @@ const liveConfig: AppConfig = {
   upstreamMaxAttempts: 2,
   upstreamRetryBaseMs: 150,
   circuitFailureThreshold: 5,
-  circuitResetMs: 30000
+  circuitResetMs: 30000,
+  allowedHosts: ["localhost", "127.0.0.1"],
+  allowedOrigins: ["https://playmcp.kakao.com"],
+  trustProxyHops: 0,
+  rateLimitWindowMs: 60000,
+  rateLimitMaxRequests: 100
 };
 
 describe("live upstream smoke tests", { skip: !liveEnabled }, () => {

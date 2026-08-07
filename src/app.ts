@@ -1,10 +1,11 @@
 import { performance } from "node:perf_hooks";
-import express, { Express, Request } from "express";
+import express, { ErrorRequestHandler, Express, Request } from "express";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { AppConfig } from "./config.js";
 import { Data4LibraryClient } from "./data4library.js";
+import { createRateLimiter, requireJsonContentType, securityHeaders, validateMcpAuthority } from "./http-security.js";
 import { createJsonLogger, Logger } from "./logger.js";
 import { createRequestContext, getRequestContext, RequestContext, runWithRequestContext } from "./request-context.js";
 import { callTool, TOOL_DEFINITIONS } from "./tools.js";
@@ -18,6 +19,9 @@ export function createApp(config: AppConfig, dependencies: AppDependencies = {})
   const logger = dependencies.logger ?? createJsonLogger({ minimumLevel: config.logLevel });
   const client = dependencies.client ?? new Data4LibraryClient(config, { logger });
   const app = express();
+  app.disable("x-powered-by");
+  app.set("trust proxy", config.trustProxyHops);
+  app.use(securityHeaders());
 
   app.use((req, res, next) => {
     const requestId = resolveRequestId(req);
@@ -36,6 +40,15 @@ export function createApp(config: AppConfig, dependencies: AppDependencies = {})
     runWithRequestContext(context, next);
   });
 
+  app.use("/mcp", validateMcpAuthority({
+    allowedHosts: config.allowedHosts,
+    allowedOrigins: config.allowedOrigins
+  }));
+  app.use("/mcp", requireJsonContentType());
+  app.use("/mcp", createRateLimiter({
+    windowMs: config.rateLimitWindowMs,
+    maxRequests: config.rateLimitMaxRequests
+  }));
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/health", (_req, res) => {
@@ -93,6 +106,20 @@ export function createApp(config: AppConfig, dependencies: AppDependencies = {})
       }
     }
   });
+
+  const jsonErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+    const context = getRequestContext();
+    logger.warn("http.request.rejected", {
+      requestId: context?.requestId,
+      reason: error instanceof Error ? error.message : "Invalid request body"
+    });
+    if (res.headersSent) return;
+    const statusCode = isPayloadTooLarge(error) ? 413 : 400;
+    res.status(statusCode).json({
+      error: statusCode === 413 ? "Request body is too large." : "Request body is not valid JSON."
+    });
+  };
+  app.use(jsonErrorHandler);
 
   return app;
 }
@@ -155,4 +182,9 @@ function elapsedMs(startedAt: number): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPayloadTooLarge(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("type" in error)) return false;
+  return error.type === "entity.too.large";
 }

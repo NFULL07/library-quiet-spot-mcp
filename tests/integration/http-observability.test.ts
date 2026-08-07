@@ -15,7 +15,12 @@ const config: AppConfig = {
   upstreamMaxAttempts: 1,
   upstreamRetryBaseMs: 1,
   circuitFailureThreshold: 5,
-  circuitResetMs: 1000
+  circuitResetMs: 1000,
+  allowedHosts: ["localhost", "127.0.0.1"],
+  allowedOrigins: ["https://playmcp.kakao.com"],
+  trustProxyHops: 0,
+  rateLimitWindowMs: 60000,
+  rateLimitMaxRequests: 100
 };
 
 describe("HTTP request observability", () => {

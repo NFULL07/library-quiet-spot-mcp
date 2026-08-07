@@ -19,6 +19,11 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     upstreamRetryBaseMs: 10,
     circuitFailureThreshold: 2,
     circuitResetMs: 1000,
+    allowedHosts: ["localhost", "127.0.0.1"],
+    allowedOrigins: ["https://playmcp.kakao.com"],
+    trustProxyHops: 0,
+    rateLimitWindowMs: 60000,
+    rateLimitMaxRequests: 100,
     ...overrides
   };
 }

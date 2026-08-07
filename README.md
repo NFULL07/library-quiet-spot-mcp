@@ -44,6 +44,7 @@
 - **Bounded LRU cache**: 신선 데이터 TTL과 stale 보존 기간을 분리하고, 최대 엔트리 수를 넘으면 최근 사용 순서에 따라 제거해 장기 실행 중 메모리 증가를 제한합니다.
 - **Structured observability**: HTTP 요청 ID를 MCP 도구 실행까지 전달하고, 상태·지연시간·출력 크기를 API 키나 사용자 인자 없이 JSON 로그로 남깁니다.
 - **Upstream resilience**: 일시적 네트워크·5xx 오류만 짧게 재시도하고, 공급자별 circuit breaker로 반복 장애를 차단해 정보나루 호출량과 응답 지연을 보호합니다.
+- **HTTP boundary protection**: MCP 경로에 Host/Origin 검증, JSON 콘텐츠 타입, 보안 헤더, 프로세스 단위 요청 제한을 적용합니다.
 - **MCP-ready transport**: Streamable HTTP 기반 MCP 서버로 구현했습니다.
 - **Stateless startup**: 서버는 먼저 포트를 열고, 인증키나 외부 API 상태와 무관하게 `tools/list`가 동작하도록 구성했습니다.
 - **XML normalization**: XML 파서가 0건, 1건, 다건을 다르게 반환하는 문제를 `ensureArray`와 빈 값 정규화로 방어합니다.
@@ -154,6 +155,11 @@ Default endpoints:
 | `UPSTREAM_RETRY_BASE_MS` | no | `150` | Initial exponential backoff delay |
 | `CIRCUIT_FAILURE_THRESHOLD` | no | `5` | Consecutive failures before opening a provider circuit |
 | `CIRCUIT_RESET_MS` | no | `30000` | Open-circuit wait before one half-open probe |
+| `ALLOWED_HOSTS` | no | deployed endpoint + local hosts | Comma-separated Host allowlist for `/mcp` |
+| `ALLOWED_ORIGINS` | no | `https://playmcp.kakao.com` | Allowed browser origins; requests without Origin remain valid for server clients |
+| `TRUST_PROXY_HOPS` | no | `1` | Number of trusted PlayMCP ingress proxy hops used to resolve client IP |
+| `RATE_LIMIT_WINDOW_MS` | no | `60000` | In-process MCP rate-limit window |
+| `RATE_LIMIT_MAX_REQUESTS` | no | `120` | Maximum MCP requests per resolved client IP and window |
 
 The server can start and expose tool metadata without an API key. Tool calls that need live Data4Library data return a clear setup message until `DATA4LIBRARY_AUTH_KEY` is configured. Place-name search, such as `홍대입구역 근처 도서관`, additionally requires `KAKAO_REST_API_KEY`; coordinate-based nearby search still works without it. Aladin augmentation is optional; without `ALADIN_TTB_KEY`, child recommendations still use Data4Library age-group loan data.
 
@@ -172,6 +178,9 @@ Both commands should pass before deployment.
 - `.env.example` intentionally contains only placeholder values.
 - Cache keys exclude the API key to avoid retaining credentials in process memory longer than necessary.
 - Tool output never returns raw upstream JSON/XML dumps.
+- `/mcp` validates the configured Host and any supplied Origin before parsing JSON.
+- Rate limiting is deliberately process-local; a multi-replica deployment should replace it with a shared gateway or distributed limiter.
+- The runtime image executes as the unprivileged Alpine `node` user.
 
 ## License
 

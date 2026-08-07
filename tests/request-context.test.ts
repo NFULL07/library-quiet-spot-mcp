@@ -17,7 +17,12 @@ it("keeps stale fallback notices isolated across concurrent requests", async () 
     upstreamMaxAttempts: 1,
     upstreamRetryBaseMs: 1,
     circuitFailureThreshold: 5,
-    circuitResetMs: 1000
+    circuitResetMs: 1000,
+    allowedHosts: ["localhost", "127.0.0.1"],
+    allowedOrigins: ["https://playmcp.kakao.com"],
+    trustProxyHops: 0,
+    rateLimitWindowMs: 60000,
+    rateLimitMaxRequests: 100
   };
   const client = new Data4LibraryClient(config, {
     fetch: async (input) => {
