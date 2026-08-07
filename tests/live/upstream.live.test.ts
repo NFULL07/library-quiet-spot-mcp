@@ -13,7 +13,11 @@ const liveConfig: AppConfig = {
   cacheStaleTtlMs: 1000,
   cacheMaxEntries: 50,
   requestTimeoutMs: 10000,
-  logLevel: "error"
+  logLevel: "error",
+  upstreamMaxAttempts: 2,
+  upstreamRetryBaseMs: 150,
+  circuitFailureThreshold: 5,
+  circuitResetMs: 30000
 };
 
 describe("live upstream smoke tests", { skip: !liveEnabled }, () => {

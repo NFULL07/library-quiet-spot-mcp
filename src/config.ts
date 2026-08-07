@@ -8,6 +8,10 @@ export type AppConfig = {
   cacheMaxEntries: number;
   requestTimeoutMs: number;
   logLevel: "debug" | "info" | "warn" | "error";
+  upstreamMaxAttempts: number;
+  upstreamRetryBaseMs: number;
+  circuitFailureThreshold: number;
+  circuitResetMs: number;
 };
 
 function readPositiveInt(name: string, fallback: number): number {
@@ -32,6 +36,10 @@ export function loadConfig(): AppConfig {
     cacheStaleTtlMs: readPositiveInt("CACHE_STALE_TTL_SECONDS", 60 * 60 * 24) * 1000,
     cacheMaxEntries: readPositiveInt("CACHE_MAX_ENTRIES", 500),
     requestTimeoutMs: readPositiveInt("REQUEST_TIMEOUT_MS", 5000),
-    logLevel: readLogLevel()
+    logLevel: readLogLevel(),
+    upstreamMaxAttempts: readPositiveInt("UPSTREAM_MAX_ATTEMPTS", 2),
+    upstreamRetryBaseMs: readPositiveInt("UPSTREAM_RETRY_BASE_MS", 150),
+    circuitFailureThreshold: readPositiveInt("CIRCUIT_FAILURE_THRESHOLD", 5),
+    circuitResetMs: readPositiveInt("CIRCUIT_RESET_MS", 30000)
   };
 }

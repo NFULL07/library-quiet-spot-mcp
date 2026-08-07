@@ -77,3 +77,9 @@ This boundary makes three kinds of change independent:
 - name/ISBN matching and ambiguity policy
 
 The split is guarded by unit and upstream-contract tests so moving code does not silently change user-facing behavior.
+
+## 9. Retry Only Failures That Can Recover Quickly
+
+Retries are intentionally narrow because Data4Library enforces a daily request quota. Network failures, timeouts, and selected 5xx responses use a short bounded exponential backoff. A 429 response is retried only when the server supplies a short `Retry-After`; application-level quota errors are never retried.
+
+Each upstream provider has an independent circuit breaker. Repeated failures open only that provider's circuit, allowing stale Data4Library cache data or unaffected Kakao/Aladin operations to continue without spending time and quota on requests that are likely to fail.

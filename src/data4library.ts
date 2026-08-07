@@ -1,7 +1,18 @@
 import { XMLParser } from "fast-xml-parser";
 import { TtlCache } from "./cache.js";
 import { AppConfig } from "./config.js";
+import { Logger, noopLogger } from "./logger.js";
 import { getRequestContext } from "./request-context.js";
+import {
+  CircuitBreaker,
+  CircuitSnapshot,
+  UpstreamHttpError,
+  UpstreamProvider,
+  UpstreamTimeoutError,
+  countsTowardCircuit,
+  isRetryableUpstreamError,
+  withRetry
+} from "./resilience.js";
 import { cleanText, ensureArray, numberFrom } from "./text.js";
 
 export type BookSummary = {
@@ -102,6 +113,9 @@ type XmlObject = Record<string, unknown>;
 
 export type Data4LibraryClientOptions = {
   fetch?: typeof globalThis.fetch;
+  logger?: Logger;
+  sleep?: (delayMs: number) => Promise<void>;
+  now?: () => number;
 };
 
 export class MissingAuthKeyError extends Error {
@@ -120,6 +134,9 @@ export class Data4LibraryClient {
   private readonly cache: TtlCache<unknown>;
   private readonly librarySearchCache: TtlCache<LibrarySummary[]>;
   private readonly fetch: typeof globalThis.fetch;
+  private readonly logger: Logger;
+  private readonly sleep?: (delayMs: number) => Promise<void>;
+  private readonly breakers: Record<UpstreamProvider, CircuitBreaker>;
   private readonly parser = new XMLParser({
     ignoreAttributes: false,
     trimValues: true,
@@ -135,10 +152,31 @@ export class Data4LibraryClient {
     this.cache = new TtlCache(config.cacheTtlMs, cacheOptions);
     this.librarySearchCache = new TtlCache(config.cacheTtlMs, cacheOptions);
     this.fetch = options.fetch ?? globalThis.fetch;
+    this.logger = options.logger ?? noopLogger;
+    this.sleep = options.sleep;
+    const createBreaker = (provider: UpstreamProvider): CircuitBreaker => new CircuitBreaker(provider, {
+      failureThreshold: config.circuitFailureThreshold,
+      resetAfterMs: config.circuitResetMs,
+      now: options.now,
+      onStateChange: (state, snapshot) => this.logCircuitState(provider, state, snapshot)
+    });
+    this.breakers = {
+      data4library: createBreaker("data4library"),
+      kakao: createBreaker("kakao"),
+      aladin: createBreaker("aladin")
+    };
   }
 
   get cacheSize(): number {
     return this.cache.size + this.librarySearchCache.size;
+  }
+
+  get circuitStatus(): Record<UpstreamProvider, CircuitSnapshot> {
+    return {
+      data4library: this.breakers.data4library.snapshot(),
+      kakao: this.breakers.kakao.snapshot(),
+      aladin: this.breakers.aladin.snapshot()
+    };
   }
 
   hasAuthKey(): boolean {
@@ -419,24 +457,22 @@ export class Data4LibraryClient {
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) return cached;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     try {
-      const response = await this.fetch(url, { signal: controller.signal }).catch((error: unknown) => {
-        if (isAbortError(error)) {
-          throw new Error(`Data4Library request timed out after ${this.config.requestTimeoutMs}ms`);
+      const parsed = await this.executeUpstream("data4library", async () => {
+        const response = await this.fetchOnce(
+          "Data4Library",
+          url,
+          {},
+          false
+        );
+        const text = await response.text();
+        const value = this.parser.parse(text) as unknown;
+        const upstreamError = findData4LibraryError(value);
+        if (upstreamError) {
+          throw new Error(`Data4Library API error: ${upstreamError}`);
         }
-        throw error;
+        return value;
       });
-      if (!response.ok) {
-        throw new Error(`Data4Library returned HTTP ${response.status}`);
-      }
-      const text = await response.text();
-      const parsed = this.parser.parse(text) as unknown;
-      const upstreamError = findData4LibraryError(parsed);
-      if (upstreamError) {
-        throw new Error(`Data4Library API error: ${upstreamError}`);
-      }
       this.cache.set(cacheKey, parsed);
       return parsed;
     } catch (error) {
@@ -446,8 +482,6 @@ export class Data4LibraryClient {
         return stale.value;
       }
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -470,32 +504,21 @@ export class Data4LibraryClient {
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) return cached;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
-    try {
-      const response = await this.fetch(url, {
-        signal: controller.signal,
-        headers: {
-          Authorization: `KakaoAK ${this.config.kakaoRestApiKey}`
-        }
-      }).catch((error: unknown) => {
-        if (isAbortError(error)) {
-          throw new Error(`Kakao Local request timed out after ${this.config.requestTimeoutMs}ms`);
-        }
-        throw error;
-      });
-      if (!response.ok) {
-        const errorBody = await response.text().catch(() => "");
-        throw new Error(
-          `Kakao Local returned HTTP ${response.status}${errorBody ? `: ${truncateErrorBody(errorBody)}` : ""}`
-        );
-      }
-      const parsed = await response.json() as unknown;
-      this.cache.set(cacheKey, parsed);
-      return parsed;
-    } finally {
-      clearTimeout(timeout);
-    }
+    const parsed = await this.executeUpstream("kakao", async () => {
+      const response = await this.fetchOnce(
+        "Kakao Local",
+        url,
+        {
+          headers: {
+            Authorization: `KakaoAK ${this.config.kakaoRestApiKey}`
+          }
+        },
+        true
+      );
+      return response.json() as Promise<unknown>;
+    });
+    this.cache.set(cacheKey, parsed);
+    return parsed;
   }
 
   private async requestAladinJson(
@@ -518,27 +541,81 @@ export class Data4LibraryClient {
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) return cached;
 
+    const parsed = await this.executeUpstream("aladin", async () => {
+      const response = await this.fetchOnce("Aladin OpenAPI", url, {}, true);
+      return response.json() as Promise<unknown>;
+    });
+    this.cache.set(cacheKey, parsed);
+    return parsed;
+  }
+
+  private async executeUpstream<T>(provider: UpstreamProvider, operation: () => Promise<T>): Promise<T> {
+    return this.breakers[provider].execute(
+      () => withRetry(operation, {
+        maxAttempts: this.config.upstreamMaxAttempts,
+        baseDelayMs: this.config.upstreamRetryBaseMs,
+        shouldRetry: isRetryableUpstreamError,
+        sleep: this.sleep,
+        onRetry: ({ attempt, nextAttempt, delayMs, error }) => {
+          this.logger.warn("upstream.retry.scheduled", {
+            requestId: getRequestContext()?.requestId,
+            provider,
+            attempt,
+            nextAttempt,
+            delayMs,
+            error
+          });
+        }
+      }),
+      countsTowardCircuit
+    );
+  }
+
+  private async fetchOnce(
+    serviceName: string,
+    url: URL,
+    init: RequestInit,
+    includeErrorBody: boolean
+  ): Promise<Response> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     try {
-      const response = await this.fetch(url, { signal: controller.signal }).catch((error: unknown) => {
+      const response = await this.fetch(url, {
+        ...init,
+        signal: controller.signal
+      }).catch((error: unknown) => {
         if (isAbortError(error)) {
-          throw new Error(`Aladin OpenAPI request timed out after ${this.config.requestTimeoutMs}ms`);
+          throw new UpstreamTimeoutError(`${serviceName} request timed out after ${this.config.requestTimeoutMs}ms`);
         }
         throw error;
       });
       if (!response.ok) {
-        const errorBody = await response.text().catch(() => "");
-        throw new Error(
-          `Aladin OpenAPI returned HTTP ${response.status}${errorBody ? `: ${truncateErrorBody(errorBody)}` : ""}`
+        const errorBody = includeErrorBody ? await response.text().catch(() => "") : "";
+        throw new UpstreamHttpError(
+          `${serviceName} returned HTTP ${response.status}${errorBody ? `: ${truncateErrorBody(errorBody)}` : ""}`,
+          response.status,
+          parseRetryAfterMs(response.headers.get("retry-after"))
         );
       }
-      const parsed = await response.json() as unknown;
-      this.cache.set(cacheKey, parsed);
-      return parsed;
+      return response;
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private logCircuitState(provider: UpstreamProvider, state: string, snapshot: CircuitSnapshot): void {
+    const fields = {
+      requestId: getRequestContext()?.requestId,
+      provider,
+      state,
+      consecutiveFailures: snapshot.consecutiveFailures,
+      retryAfterMs: snapshot.retryAfterMs
+    };
+    if (state === "open") {
+      this.logger.warn("upstream.circuit.opened", fields);
+      return;
+    }
+    this.logger.info(`upstream.circuit.${state}`, fields);
   }
 
   private responseOf(xml: unknown): unknown {
@@ -862,6 +939,15 @@ function formatStaleNotice(endpoint: string, storedAt: number, error: unknown): 
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const date = Date.parse(value);
+  if (!Number.isFinite(date)) return undefined;
+  return Math.max(0, date - Date.now());
 }
 
 function truncateErrorBody(value: string): string {

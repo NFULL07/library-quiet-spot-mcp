@@ -9,6 +9,13 @@ export type Logger = {
   error(event: string, fields?: LogFields): void;
 };
 
+export const noopLogger: Logger = {
+  debug: () => undefined,
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined
+};
+
 export type JsonLoggerOptions = {
   minimumLevel?: LogLevel;
   write?: (line: string) => void;

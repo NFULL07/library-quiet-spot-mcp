@@ -15,8 +15,8 @@ export type AppDependencies = {
 };
 
 export function createApp(config: AppConfig, dependencies: AppDependencies = {}): Express {
-  const client = dependencies.client ?? new Data4LibraryClient(config);
   const logger = dependencies.logger ?? createJsonLogger({ minimumLevel: config.logLevel });
+  const client = dependencies.client ?? new Data4LibraryClient(config, { logger });
   const app = express();
 
   app.use((req, res, next) => {
@@ -49,7 +49,8 @@ export function createApp(config: AppConfig, dependencies: AppDependencies = {})
       authKeyConfigured: ready,
       kakaoRestApiKeyConfigured: client.hasKakaoRestApiKey(),
       aladinTtbKeyConfigured: client.hasAladinTtbKey(),
-      cacheSize: client.cacheSize
+      cacheSize: client.cacheSize,
+      circuits: client.circuitStatus
     });
   });
 

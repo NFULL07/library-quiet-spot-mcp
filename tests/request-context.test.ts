@@ -13,7 +13,11 @@ it("keeps stale fallback notices isolated across concurrent requests", async () 
     cacheStaleTtlMs: 1000,
     cacheMaxEntries: 50,
     requestTimeoutMs: 1000,
-    logLevel: "error"
+    logLevel: "error",
+    upstreamMaxAttempts: 1,
+    upstreamRetryBaseMs: 1,
+    circuitFailureThreshold: 5,
+    circuitResetMs: 1000
   };
   const client = new Data4LibraryClient(config, {
     fetch: async (input) => {

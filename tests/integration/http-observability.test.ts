@@ -11,7 +11,11 @@ const config: AppConfig = {
   cacheStaleTtlMs: 1000,
   cacheMaxEntries: 50,
   requestTimeoutMs: 1000,
-  logLevel: "debug"
+  logLevel: "debug",
+  upstreamMaxAttempts: 1,
+  upstreamRetryBaseMs: 1,
+  circuitFailureThreshold: 5,
+  circuitResetMs: 1000
 };
 
 describe("HTTP request observability", () => {
