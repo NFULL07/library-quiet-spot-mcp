@@ -208,3 +208,11 @@ npm.cmd run test:load
 $env:RUN_LIVE_API_TESTS = "1"
 npm.cmd run test:live
 ```
+
+## 9. CI Action runtime 유지보수
+
+Commit: `ci(actions): use current Node 24 action runtimes`
+
+첫 CI 실행은 모든 검증에 성공했지만 GitHub가 v4 Action의 Node 20 런타임을 강제로 Node 24로 전환했다는 deprecation annotation을 남겼습니다. 공식 `actions/checkout`과 `actions/setup-node` 사용 예시를 확인해 둘 다 v7로 갱신했습니다.
+
+이 변경은 Action 자체의 실행 런타임만 최신화합니다. 프로젝트 검증 대상인 `node-version: 22`와 Docker `node:22-alpine`은 그대로 유지합니다.
