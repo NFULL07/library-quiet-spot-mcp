@@ -7,6 +7,7 @@ export type AppConfig = {
   cacheStaleTtlMs: number;
   cacheMaxEntries: number;
   requestTimeoutMs: number;
+  logLevel: "debug" | "info" | "warn" | "error";
 };
 
 function readPositiveInt(name: string, fallback: number): number {
@@ -14,6 +15,11 @@ function readPositiveInt(name: string, fallback: number): number {
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readLogLevel(): AppConfig["logLevel"] {
+  const value = process.env.LOG_LEVEL?.trim().toLowerCase();
+  return value === "debug" || value === "warn" || value === "error" ? value : "info";
 }
 
 export function loadConfig(): AppConfig {
@@ -25,6 +31,7 @@ export function loadConfig(): AppConfig {
     cacheTtlMs: readPositiveInt("CACHE_TTL_SECONDS", 60 * 60 * 6) * 1000,
     cacheStaleTtlMs: readPositiveInt("CACHE_STALE_TTL_SECONDS", 60 * 60 * 24) * 1000,
     cacheMaxEntries: readPositiveInt("CACHE_MAX_ENTRIES", 500),
-    requestTimeoutMs: readPositiveInt("REQUEST_TIMEOUT_MS", 5000)
+    requestTimeoutMs: readPositiveInt("REQUEST_TIMEOUT_MS", 5000),
+    logLevel: readLogLevel()
   };
 }

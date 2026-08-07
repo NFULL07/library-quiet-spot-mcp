@@ -11,7 +11,8 @@ const config: AppConfig = {
   cacheTtlMs: 1000,
   cacheStaleTtlMs: 1000,
   cacheMaxEntries: 50,
-  requestTimeoutMs: 1000
+  requestTimeoutMs: 1000,
+  logLevel: "error"
 };
 
 describe("upstream adapter contracts", () => {
